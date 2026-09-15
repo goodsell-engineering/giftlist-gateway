@@ -92,27 +92,23 @@ heading text, never by section number (CONVENTIONS.md "Citing the rules").
 
 ## What does not work yet, and whose job it is
 
-Restore needs the local folder feed, and the pieces that wire it up are the next three issues:
+The local folder feed and this repo's `nuget.config` landed in GL-26 — see that file's own
+comments for the packageSourceMapping reasoning (dependency confusion against nuget.org's
+unrelated `BuildingBlocks` and `Identity.Contracts` packages) and for how the same
+`"../local-feed"` value resolves correctly both on the host and inside the .NET service
+containers. What's still missing:
 
 | Missing | Issue |
 |---|---|
-| `../local-feed` and a `nuget.config` per repo pointing at it alongside nuget.org | GL-26 |
 | Semantic versioning discipline and consumer pinning | GL-27 |
 | `make pack-all` (dependency-ordered, refuses to overwrite a version already in the feed) and `clone-all.sh` | GL-28 |
 | Compose mounting the feed into the containers | GL-29 |
 | Per-repo CI (build and test only; there is nowhere to publish to) | GL-30 |
 
-Until GL-26 lands, restore by naming the feed on the command line:
+Restore and build normally:
 
 ```
-dotnet restore <Solution>.sln -s https://api.nuget.org/v3/index.json -s ../local-feed
+dotnet restore <Solution>.sln
 dotnet build <Solution>.sln --no-restore
 dotnet test tests/*.UnitTests/*.UnitTests.csproj
 ```
-
-**A warning for whoever writes GL-26's `nuget.config`.** nuget.org already serves unrelated
-packages called `BuildingBlocks` (at 1.0.0) and `Identity.Contracts` (at 1.0.14). A consumer
-configured with both nuget.org and the folder feed can satisfy an exact version from either
-source, so listing the feed as a second `<add key>` is not enough — use `packageSourceMapping`
-to bind these ids to the local feed. The 0.1.0 starting version was picked because it exists on
-neither id upstream, which narrows the window but does not close it.
