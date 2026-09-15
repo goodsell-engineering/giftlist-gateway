@@ -1,0 +1,36 @@
+{
+  "name": "@giftlist/gateway-client",
+  "version": "0.1.0",
+  "description": "Generated TypeScript grpc-web client for the GiftList Gateway. Built from this repo's protos/, which the Gateway owns.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist"
+  ],
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "generate": "buf generate",
+    "build": "npm run generate && tsc -p tsconfig.json",
+    "clean": "rm -rf dist src/gen",
+    "prepack": "npm run build"
+  },
+  "peerDependencies": {
+    "@bufbuild/protobuf": "^2.14.1"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "^1.72.0",
+    "@bufbuild/protobuf": "^2.14.1",
+    "@bufbuild/protoc-gen-es": "^2.14.1",
+    "typescript": "~6.0.2"
+  }
+}

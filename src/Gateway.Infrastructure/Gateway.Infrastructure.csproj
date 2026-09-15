@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- GL-18: grpc-web server + codegen from gateway/protos. Grpc.AspNetCore is the meta-package
+         (server, Google.Protobuf, Grpc.Tools codegen); Grpc.AspNetCore.Web adds the grpc-web
+         framing middleware Gateway.Host needs (UseGrpcWeb) — the meta-package does not include
+         it. Both are permitted here by CONVENTIONS.md "Project reference graph": Grpc.* is banned from Application, not
+         Infrastructure. -->
+    <PackageReference Include="Grpc.AspNetCore" Version="2.83.0" />
+    <PackageReference Include="Grpc.AspNetCore.Web" Version="2.83.0" />
+    <!-- GL-23: the Gateway's own read model (Mongo) and the Rebus subscription that fills it from
+         GiftLists' integration events. Same package/version choices as GiftLists.Infrastructure
+         and Identity.Infrastructure, for consistency across services. -->
+    <PackageReference Include="MongoDB.Driver" Version="3.11.1" />
+    <PackageReference Include="Rebus" Version="8.9.3" />
+    <PackageReference Include="Rebus.ServiceProvider" Version="10.7.2" />
+    <!-- Open-generic decoration (CONVENTIONS.md "Use cases" — one Validating<,>/Logging<,> pair for
+         every use case) needs Scrutor's Decorate(Type, Type) overload; Microsoft.Extensions.DI
+         alone has no equivalent. -->
+    <PackageReference Include="Scrutor" Version="7.0.0" />
+    <!-- GL-23: myGiftLists/giftList(id), the Gateway's first GraphQL surface. Permitted here by
+         CONVENTIONS.md "Project reference graph": HotChocolate.* is banned from Application, not Infrastructure. -->
+    <PackageReference Include="HotChocolate.AspNetCore" Version="16.6.4" />
+    <!-- GL-23: validates the JWT the SPA sends with every GraphQL request, against the RSA public
+         key half of the key pair Identity signs with (ARCHITECTURE.md "Why workers still need a little HTTP" — "public key mounted
+         into the Gateway as config"). The Gateway never sees the private key. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- GL-18: the wire contract AuthGrpcService's messages are generated from. GrpcServices=Both
+         (not just Server) also generates AuthServiceClient — unused in production (the Gateway
+         only ever implements this service, never calls it), but it lets
+         Gateway.IntegrationTests drive AuthGrpcService through a real generated client rather
+         than hand-rolling grpc-web wire calls. -->
+    <Protobuf Include="..\..\protos\identity.proto" GrpcServices="Both" />
+    <!-- GL-71: the browser's grpc-web entry point for the GiftLists command surface — same
+         GrpcServices="Both" rationale as identity.proto above (unused server-side Client type,
+         used by Gateway.IntegrationTests to drive the real generated client). -->
+    <Protobuf Include="..\..\protos\giftlists.proto" GrpcServices="Both" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Gateway.Application\Gateway.Application.csproj" />
+    <!-- GL-18: the Gateway does not call Identity directly — AuthGrpcService sends Identity's
+         SignUp/Login commands and awaits the reply through IRequestReplyBridge
+         (BuildingBlocks.Infrastructure), so it needs both the bridge and the exact wire types
+         Identity's handlers route on. CONVENTIONS.md "Project reference graph" permits Infrastructure to reference both
+         its own and other services' *.Contracts. Also GL-79: GiftListProjectionRepository's
+         bounded CAS retry (BoundedCasRetry/BoundedCasRetryPolicy, formerly local to this
+         project's own GiftLists/Persistence folder as BoundedCasRetry/ProjectionCasRetryPolicy)
+         now lives in BuildingBlocks.Persistence. -->
+    <PackageReference Include="BuildingBlocks" Version="0.1.0" />
+    <PackageReference Include="BuildingBlocks.Infrastructure" Version="0.1.0" />
+    <PackageReference Include="Identity.Contracts" Version="0.1.0" />
+    <!-- GL-23: the Gateway's read model is built from GiftLists' own integration events —
+         CONVENTIONS.md "Project reference graph" permits Infrastructure to reference another service's *.Contracts. -->
+    <PackageReference Include="GiftLists.Contracts" Version="0.1.0" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <!-- CONVENTIONS.md "Testing": all infrastructure real via Testcontainers — Mongo and RabbitMQ both,
+         never an in-memory substitute for either. -->
+    <PackageReference Include="Testcontainers.MongoDb" Version="4.14.0" />
+    <PackageReference Include="Testcontainers.RabbitMq" Version="4.14.0" />
+    <!-- GL-75: QueueCleanup (the reason this project declared RabbitMQ.Client explicitly under
+         GL-70) moved to BuildingBlocks.Testing, which now declares that package itself. Nothing
+         in this project's own source touches a RabbitMQ.Client type any more, so the explicit
+         reference here would be dead weight — checked, not assumed (GL-75). -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
+    <!-- Enters through the real ASP.NET Core host (Program.cs's grpc-web pipeline), not a
+         re-assembled stand-in — WebApplicationFactory<Program> hosts Gateway.Host in-memory. -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.11" />
+    <!-- The generated grpc client (AuthService.AuthServiceClient, from Gateway.Infrastructure's
+         Protobuf item) speaks over these — Grpc.Net.Client.Web wraps the HTTP handler so the
+         test genuinely exercises grpc-web framing (UseGrpcWeb), not plain HTTP/2 gRPC, which is
+         the one thing GL-18 actually adds over an ordinary gRPC server. -->
+    <PackageReference Include="Grpc.Net.Client" Version="2.83.0" />
+    <PackageReference Include="Grpc.Net.Client.Web" Version="2.83.0" />
+    <!-- GL-23: asserts directly against gateway.giftListProjections (the projection's persistence
+         collection) and publishes GiftLists' own integration events onto the real broker. -->
+    <PackageReference Include="MongoDB.Driver" Version="3.11.1" />
+    <!-- GL-23: TestTokenIssuer mints an access token the same way Identity's own JwtTokenIssuer
+         does, so myGiftLists/giftList(id) tests exercise the Gateway's real JWT validation rather
+         than a stand-in for it. -->
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.22.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Gateway.Host\Gateway.Host.csproj" />
+    <!-- GL-23: publishes the real GiftLists.Contracts.GiftLists.Events.*V1 types this read model
+         is built from — CONVENTIONS.md "Testing" (assert on contracts published to the real broker, and
+         a test project may reach for a service's Contracts freely; ACL is an Infrastructure-only
+         rule). -->
+    <PackageReference Include="GiftLists.Contracts" Version="0.1.0" />
+    <!-- GL-75: shared QueueCleanup, rather than the fourth copy of it. -->
+    <PackageReference Include="BuildingBlocks.Testing" Version="0.1.0" />
+  </ItemGroup>
+</Project>
