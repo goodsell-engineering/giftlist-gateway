@@ -92,17 +92,17 @@ heading text, never by section number (CONVENTIONS.md "Citing the rules").
 
 ## What does not work yet, and whose job it is
 
-The local folder feed and this repo's `nuget.config` landed in GL-26 — see that file's own
-comments for the packageSourceMapping reasoning (dependency confusion against nuget.org's
-unrelated `BuildingBlocks` and `Identity.Contracts` packages) and for how the same
-`"../local-feed"` value resolves correctly both on the host and inside the .NET service
-containers. What's still missing:
+The local folder feed, this repo's `nuget.config` (GL-26) and the compose mounts that make the
+feed visible inside every container (GL-29) have all landed — see the nuget.config's own comments
+for the packageSourceMapping reasoning (dependency confusion against nuget.org's unrelated
+`BuildingBlocks` and `Identity.Contracts` packages) and for why one mount path,
+`- ../local-feed:/local-feed:ro`, now serves every service, .NET or web, with no
+container-specific path or symlink to reconcile. What's still missing:
 
 | Missing | Issue |
 |---|---|
 | Semantic versioning discipline and consumer pinning | GL-27 |
 | `make pack-all` (dependency-ordered, refuses to overwrite a version already in the feed) and `clone-all.sh` | GL-28 |
-| Compose mounting the feed into the containers | GL-29 |
 | Per-repo CI (build and test only; there is nowhere to publish to) | GL-30 |
 
 Restore and build normally:

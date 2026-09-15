@@ -11,11 +11,12 @@
 # only see its own context: ../local-feed sits outside this repo, so a restore here could not
 # resolve them no matter how it were written (ARCHITECTURE.md "Making the local feed visible to
 # containers"). The documented answer is to restore at container *runtime*, where compose has
-# mounted the feed as a second volume at /feed and the repo's nuget.config points at it (GL-26,
-# via a symlink created below). Until GL-29 adds that mount, this image builds and starts, and
-# `dotnet watch` fails its first restore. Do not "fix" that by baking a restore back in here —
-# the only way to make it work is to widen the build context to the parent of every repo, which
-# is the secondary approach that section deliberately does not make the default.
+# mounted the feed as a second volume at /local-feed (GL-29) and the repo's nuget.config (GL-26)
+# names the feed as "../local-feed", which resolves against nuget.config's own directory
+# (this repo's root, /src at runtime) to that exact mount point — no container-specific path
+# needed. Do not "fix" the lack of a restore layer by baking one back in here — the only way to
+# make that work is to widen the build context to the parent of every repo, which is the
+# secondary approach that section deliberately does not make the default.
 #
 # The cost of having no restore layer: the first `dotnet watch` inside a fresh container restores
 # from cold instead of from a warm image layer. Measured in seconds, paid once per image.
@@ -29,16 +30,6 @@ COPY . .
 # ASPNETCORE_URLS is supplied by compose so Kestrel binds 0.0.0.0:8080 inside the container.
 ENV DOTNET_USE_POLLING_FILE_WATCHER=1 \
     DOTNET_WATCH_SUPPRESS_LAUNCH_BROWSER=1
-
-# GL-26: this repo's nuget.config names the local feed as "../local-feed", resolved relative to
-# the config file's own directory (this repo's root, /src at runtime), so the same literal value
-# also works unmodified on the host, where local-feed really is a sibling directory. Compose
-# mounts the feed at /feed instead of at a sibling path (ARCHITECTURE.md "Making the local feed
-# visible to containers"), so this symlink creates the missing sibling. It lives outside /src on
-# purpose: the runtime bind mount replaces /src wholesale, which would hide anything placed under
-# it here. The target doesn't exist yet at image build time — that's fine, a symlink resolves
-# when it's read, not when it's created.
-RUN ln -s /feed /local-feed
 
 WORKDIR /src/src/Gateway.Host
 
