@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Gateway.Infrastructure\Gateway.Infrastructure.csproj" />
+    <!-- GL-52: composition root wires the shared Mongo/Rebus/health-check helpers directly.
+         CONVENTIONS.md "Project reference graph" permits BuildingBlocks.Infrastructure to be referenced by Host as
+         well as Infrastructure. -->
+    <PackageReference Include="BuildingBlocks.Infrastructure" Version="0.1.0" />
+  </ItemGroup>
+</Project>

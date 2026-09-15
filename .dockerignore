@@ -1,0 +1,17 @@
+# Build context is this repo's root (see giftlist-devenv/docker-compose.yml, which sets
+# `context: ../giftlist-gateway`). Since the GL-25 split the context is one repo rather than the
+# whole monorepo, so this list is only about build output and local noise — there is no longer a
+# sibling service inside the context to keep out.
+# ARCHITECTURE.md "Making the local feed visible to containers".
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+.git/
+.gitignore
+.dockerignore
+**/.vs/
+**/.vscode/
+**/.idea/
+**/*.user
+.env

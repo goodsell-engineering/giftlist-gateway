@@ -1,0 +1,5 @@
+node_modules
+dist
+# Generated from ../../protos by `npm run generate` (buf) on every build — never hand-edited,
+# never committed. See buf.gen.yaml.
+src/gen

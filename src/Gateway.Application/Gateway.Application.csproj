@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- CONVENTIONS.md "Project reference graph": Application may reference Domain and BuildingBlocks only —
+         BuildingBlocks is itself BCL-only, so this brings in Result<T>/Error/ErrorKind without
+         making Mongo/Rebus/HotChocolate reachable. The Gateway has no Domain project of its own
+         (ARCHITECTURE.md "Mapping to Clean Architecture's rings") — its read model lives here as plain projection records instead of
+         an aggregate. -->
+    <PackageReference Include="BuildingBlocks" Version="0.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Interactors are internal sealed and registered against the open generic IInteractor<,>
+         (CONVENTIONS.md "Use cases" [AT]). The validators beside them are internal sealed too —
+         as a fact of this codebase, not as something that section states; do not read the
+         citation as covering them. Either way the composition root has to name the concrete
+         types to register them, so AddGatewayInfrastructure would not compile without this.
+         Production wiring required by "Use cases", not a testing decision: CONVENTIONS.md
+         "Reaching an internal from a test" carves out exactly THIS grant — Application to its
+         own Infrastructure, for the composition root — and says in terms that targeting a
+         production assembly is not itself a reason. Do not cite this comment, or that carve-out,
+         to add a production grant of any other shape (Domain to Infrastructure, Infrastructure
+         to Host, one service to another): those are judged by the three options like anything
+         else, and need the same written justification.
+
+         GL-69 removed the Gateway.UnitTests grant that used to sit beside this one, because
+         nothing in that suite referenced an internal of this project: with the grant deleted,
+         a `dotnet clean` plus a non-incremental rebuild of Gateway.sln is green, and the whole of
+         Gateway.UnitTests then RUNS green (62 passed, 0 failed, 2 skipped, 64 total —
+         the two skips are DeferredRuleTests' own, unrelated and pre-existing). A compile alone
+         would have been the weaker claim, since a test can reach an internal through a lambda or
+         a generic and still be resolved differently; the suite was run for that reason.
+
+         So the grant granted nothing, while reading like a precedent that a unit test may reach
+         into Application whenever it likes. A grant is the last of three options, never the
+         ambient default; whoever first needs one here adds it back with the reason
+         CONVENTIONS.md "Reaching an internal from a test" asks for. -->
+    <InternalsVisibleTo Include="Gateway.Infrastructure" />
+  </ItemGroup>
+
+</Project>

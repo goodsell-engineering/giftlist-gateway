@@ -1,0 +1,22 @@
+# GL-25: regenerates the TypeScript client from this repo's own protos/*.proto. The Gateway owns
+# the .proto files and publishes the generated client as an npm package
+# (ARCHITECTURE.md "Repository layout"), so this generator moved here from giftlist-web, where it
+# used to reach across the monorepo at ../gateway/protos. After the split there is no such path,
+# and a relative path into a sibling clone would have put giftlist-web's build at the mercy of
+# whether another repo happened to be checked out.
+#
+# Wired into `npm run build`, which `prepack` runs, so `npm pack` can never ship a stale client.
+# protoc-gen-es alone generates the service client descriptor too (Connect-ES v2 folded that into
+# protoc-gen-es; no separate protoc-gen-connect-es plugin needed), consumed via
+# @connectrpc/connect's createClient in giftlist-web.
+#
+# Learn more: https://buf.build/docs/configuration/v2/buf-gen-yaml
+version: v2
+clean: true
+inputs:
+  - directory: ../../protos
+plugins:
+  - local: protoc-gen-es
+    out: src/gen
+    opt:
+      - target=ts
