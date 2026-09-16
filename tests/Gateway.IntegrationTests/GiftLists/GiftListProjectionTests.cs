@@ -243,6 +243,49 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
         Assert.Empty(response!.Value.GetProperty("items").EnumerateArray());
     }
 
+    /// <summary>
+    /// GL-31: the read-model half of the share link. No GraphQL surface calls
+    /// <c>FindByShareTokenAsync</c> yet (GL-32 owns that), so this reaches the port directly
+    /// through the composition root (<see cref="GatewayFixture.GiftListProjections"/>,
+    /// CONVENTIONS.md "Reaching an internal from a test" route 2) rather than waiting for a query
+    /// that does not exist.
+    /// </summary>
+    [Fact]
+    public async Task FindByShareTokenAsync_ShouldReturnTheList_WhenTheTokenMatches()
+    {
+        // Arrange
+        var listId = Guid.NewGuid();
+        var ownerId = Guid.NewGuid();
+        var shareToken = $"share-{Guid.NewGuid():N}";
+        await gateway.GiftListsBus.Publish(new GiftListCreatedV1(
+            listId, ownerId, "Birthday Wishlist", DateTimeOffset.UtcNow.AddDays(7), shareToken, DateTimeOffset.UtcNow));
+        await WaitForGiftListAsync(listId, ownerId);
+
+        // Act
+        var found = await Eventually.Async(
+            () => gateway.GiftListProjections.FindByShareTokenAsync(shareToken, CancellationToken.None),
+            projection => projection is not null,
+            WaitTimeout);
+
+        // Assert
+        Assert.Equal(listId, found!.ListId);
+        Assert.Equal(ownerId, found.OwnerId);
+        Assert.Equal(shareToken, found.ShareToken);
+    }
+
+    [Fact]
+    public async Task FindByShareTokenAsync_ShouldReturnNull_WhenNoListCarriesTheToken()
+    {
+        // Arrange
+        var unknownToken = $"share-{Guid.NewGuid():N}";
+
+        // Act
+        var found = await gateway.GiftListProjections.FindByShareTokenAsync(unknownToken, CancellationToken.None);
+
+        // Assert
+        Assert.Null(found);
+    }
+
     [Fact]
     public async Task GiftList_ShouldReturnForbidden_WhenANonOwnerRequestsIt()
     {
