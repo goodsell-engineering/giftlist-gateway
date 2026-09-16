@@ -1,0 +1,57 @@
+<Project>
+  <!--
+    GL-27: consumers pin exact versions of our own local packages, so adopting a new contract
+    version is a visible edit rather than something NuGet decides for you.
+
+    `Version="0.1.0"` on a PackageReference is a FLOOR ("0.1.0 or newer"), not a pin — NuGet is
+    free to float to any newer version it finds acceptable. `Version="[0.1.0]"` (the bracketed
+    range form) is the only syntax that means exactly 0.1.0 and nothing else. This target makes
+    the difference a build error instead of a convention nobody checks: every PackageReference
+    naming one of our own package ids (BuildingBlocks, BuildingBlocks.*, GiftLists.Contracts,
+    Identity.Contracts, Reservations.Contracts — the same ids nuget.config maps exclusively to
+    ../local-feed, see that file) must use the exact bracketed form.
+
+    WHY THIS IS Directory.Build.targets AND NOT Directory.Build.props. It belongs beside
+    Directory.Build.props conceptually — same synced-root-file mechanism, same "every project
+    inherits it" reasoning — but not textually in that file: TargetFrameworkTests in every
+    service's Architecture/ suite asserts Directory.Build.props is byte-identical, verbatim, to
+    the exact block CONVENTIONS.md "Target framework" documents, and CONVENTIONS.md is out of
+    this change's scope to edit. Directory.Build.targets is auto-imported by the SDK for every
+    project exactly like Directory.Build.props is (after the project body instead of before), is
+    not pinned against any documented verbatim block, and is added to the same
+    scripts/sync-repo-roots.sh synced-file set and repo-root-files.sha256 manifest as
+    Directory.Build.props and nuget.config, so it drifts exactly as loudly as they do.
+
+    WHY A BUILD-TIME TARGET AND NOT AN ARCHITECTURE TEST. It has to catch every consumer csproj
+    in every one of the five repos, including test projects that reference BuildingBlocks.Testing
+    — not just one service's own production code, which is the boundary
+    Architecture/Support/SourceFiles.cs draws for that service's own suite. An architecture test
+    also cannot see another repo's csproj at all: it runs inside one repo's own test assembly.
+    Duplicating a text-based check five times over, one per repo, would be exactly the kind of
+    per-repo drift that this file's own sync mechanism exists to prevent, and it would fail late
+    — only when that repo's own unit test suite happens to run — where a build-time target fails
+    at the first `dotnet build`, before a single line of C# compiles.
+
+    Deliberately NOT enforced on `dotnet restore` alone — restore does not run the Build target
+    graph, so a bare restore of a bad pin succeeds (verified empirically). `dotnet build` and
+    `dotnet test` both invoke restore first, so in every workflow that matters the bad pin still
+    fails loudly, just at the build step rather than the restore step.
+  -->
+  <Target Name="EnforceExactLocalPackagePins" BeforeTargets="Build;Pack;VSTest">
+    <ItemGroup>
+      <_LocalPackageReference Include="@(PackageReference)" Condition="
+        '%(Identity)' == 'BuildingBlocks' Or
+        $([System.Text.RegularExpressions.Regex]::IsMatch('%(Identity)', '^BuildingBlocks\..+$')) Or
+        '%(Identity)' == 'GiftLists.Contracts' Or
+        '%(Identity)' == 'Identity.Contracts' Or
+        '%(Identity)' == 'Reservations.Contracts'
+      " />
+      <_NonExactLocalPackageReference Include="@(_LocalPackageReference)" Condition="
+        !$([System.Text.RegularExpressions.Regex]::IsMatch('%(_LocalPackageReference.Version)', '^\[[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z\.\-]+)?\]$'))
+      " />
+    </ItemGroup>
+    <Error
+      Condition="'@(_NonExactLocalPackageReference)' != ''"
+      Text="GL-27: local GiftList packages must be pinned to an exact version, e.g. Version=&quot;[0.1.0]&quot; -- a bare Version=&quot;0.1.0&quot; is a floor, not a pin (ARCHITECTURE.md &quot;What &#39;breaking&#39; means for a message contract&quot;). Found %(_NonExactLocalPackageReference.Identity) Version=&quot;%(_NonExactLocalPackageReference.Version)&quot; in $(MSBuildProjectFullPath)." />
+  </Target>
+</Project>

@@ -46,8 +46,8 @@
          is built from — CONVENTIONS.md "Testing" (assert on contracts published to the real broker, and
          a test project may reach for a service's Contracts freely; ACL is an Infrastructure-only
          rule). -->
-    <PackageReference Include="GiftLists.Contracts" Version="0.1.0" />
+    <PackageReference Include="GiftLists.Contracts" Version="[0.1.0]" />
     <!-- GL-75: shared QueueCleanup, rather than the fourth copy of it. -->
-    <PackageReference Include="BuildingBlocks.Testing" Version="0.1.0" />
+    <PackageReference Include="BuildingBlocks.Testing" Version="[0.1.0]" />
   </ItemGroup>
 </Project>
