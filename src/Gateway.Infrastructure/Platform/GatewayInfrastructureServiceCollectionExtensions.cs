@@ -3,6 +3,7 @@ using Gateway.Application.Common;
 using Gateway.Application.GiftLists;
 using Gateway.Application.GiftLists.GetGiftList;
 using Gateway.Application.GiftLists.GetMyGiftLists;
+using Gateway.Application.GiftLists.GetSharedGiftList;
 using Gateway.Application.GiftLists.RecordGiftItemAdded;
 using Gateway.Application.GiftLists.RecordGiftItemRemoved;
 using Gateway.Application.GiftLists.RecordGiftListCreated;
@@ -93,6 +94,9 @@ public static class GatewayInfrastructureServiceCollectionExtensions
 
         services.AddScoped<IValidator<GetGiftListRequest>, GetGiftListValidator>();
         services.AddScoped<IInteractor<GetGiftListRequest, GetGiftListResponse>, GetGiftListInteractor>();
+
+        services.AddScoped<IValidator<GetSharedGiftListRequest>, GetSharedGiftListValidator>();
+        services.AddScoped<IInteractor<GetSharedGiftListRequest, GetSharedGiftListResponse>, GetSharedGiftListInteractor>();
 
         // One open-generic decorator pair, applied to every IInteractor<,> registered above —
         // Validation, then Logging, in that order in every service (CONVENTIONS.md "Use cases").

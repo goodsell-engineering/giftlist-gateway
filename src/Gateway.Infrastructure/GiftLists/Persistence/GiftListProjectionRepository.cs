@@ -68,8 +68,22 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
         return documents.Select(GiftListProjectionDocumentMapper.ToProjection).ToList();
     }
 
+    /// <summary>
+    /// The cheap belt behind GL-32's real control. <c>GetSharedGiftListValidator</c> shape-checks
+    /// the token at the boundary before the interactor runs, so an empty one cannot arrive through
+    /// <c>sharedGiftList(token)</c>; this guard costs one comparison and means any <em>future</em>
+    /// caller of this port cannot turn an empty string into a query either. That matters
+    /// specifically because a stub row (<c>HasCreated == false</c>, see
+    /// <see cref="EnsureIndexesAsync"/>) carries <c>ShareToken == string.Empty</c> — the filter
+    /// below already excludes it, and this makes the exclusion not depend on that filter alone.
+    /// </summary>
     public async Task<GiftListProjection?> FindByShareTokenAsync(string shareToken, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(shareToken))
+        {
+            return null;
+        }
+
         var document = await _giftListProjections
             .Find(d => d.ShareToken == shareToken && d.HasCreated && !d.IsDeleted)
             .FirstOrDefaultAsync(cancellationToken);

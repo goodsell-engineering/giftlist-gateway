@@ -42,14 +42,14 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
 
         // Act
         await gateway.GiftListsBus.Publish(new GiftListCreatedV1(
-            listId, ownerId, "Birthday Wishlist", expiresAt, "share-token-1", createdAt));
+            listId, ownerId, "Birthday Wishlist", expiresAt, "ShareTokenOne00000001", createdAt));
         var response = await WaitForGiftListAsync(listId, ownerId);
 
         // Assert
         Assert.Equal(listId, GetGuid(response, "listId"));
         Assert.Equal(ownerId, GetGuid(response, "ownerId"));
         Assert.Equal("Birthday Wishlist", response.GetProperty("name").GetString());
-        Assert.Equal("share-token-1", response.GetProperty("shareToken").GetString());
+        Assert.Equal("ShareTokenOne00000001", response.GetProperty("shareToken").GetString());
         Assert.Empty(response.GetProperty("items").EnumerateArray());
 
         var myLists = await GraphQlClient.QueryAsync(
@@ -84,7 +84,7 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
         var listId = Guid.NewGuid();
         var ownerId = Guid.NewGuid();
         var createdEvent = new GiftListCreatedV1(
-            listId, ownerId, "Birthday Wishlist", DateTimeOffset.UtcNow.AddDays(7), "share-token-2", DateTimeOffset.UtcNow);
+            listId, ownerId, "Birthday Wishlist", DateTimeOffset.UtcNow.AddDays(7), "ShareTokenTwo00000002", DateTimeOffset.UtcNow);
         await gateway.GiftListsBus.Publish(createdEvent);
         await WaitForGiftListAsync(listId, ownerId);
 
@@ -103,7 +103,7 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
         // Assert
         var response = await QueryGiftListAsync(listId, ownerId);
         Assert.Equal("Birthday Wishlist", response!.Value.GetProperty("name").GetString());
-        Assert.Equal("share-token-2", response.Value.GetProperty("shareToken").GetString());
+        Assert.Equal("ShareTokenTwo00000002", response.Value.GetProperty("shareToken").GetString());
         Assert.Empty(response.Value.GetProperty("items").EnumerateArray());
     }
 
@@ -259,7 +259,7 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
         // Arrange
         var listId = Guid.NewGuid();
         var ownerId = Guid.NewGuid();
-        var shareToken = $"share-{Guid.NewGuid():N}";
+        var shareToken = ShareTokens.New();
         await gateway.GiftListsBus.Publish(new GiftListCreatedV1(
             listId, ownerId, "Birthday Wishlist", DateTimeOffset.UtcNow.AddDays(7), shareToken, DateTimeOffset.UtcNow));
         await WaitForGiftListAsync(listId, ownerId);
@@ -282,7 +282,7 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
     public async Task FindByShareTokenAsync_ShouldReturnNull_WhenNoListCarriesTheToken()
     {
         // Arrange
-        var unknownToken = $"share-{Guid.NewGuid():N}";
+        var unknownToken = ShareTokens.New();
         using var scope = gateway.CreateGatewayScope();
         var repository = scope.ServiceProvider.GetRequiredService<IGiftListProjectionRepository>();
 
@@ -422,7 +422,7 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
         var listId = Guid.NewGuid();
         var ownerId = Guid.NewGuid();
         var sharedInstant = DateTimeOffset.UtcNow;
-        var shareToken = $"share-{Guid.NewGuid():N}";
+        var shareToken = ShareTokens.New();
 
         await gateway.GiftListsBus.Publish(new GiftListCreatedV1(
             listId, ownerId, "Original", DateTimeOffset.UtcNow.AddDays(7), shareToken, sharedInstant.AddSeconds(-1)));
@@ -491,7 +491,7 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
         // Act — its Created finally arrives
         await gateway.GiftListsBus.Publish(new GiftListCreatedV1(
             listId, ownerId, "Birthday Wishlist", DateTimeOffset.UtcNow.AddDays(7),
-            $"share-{Guid.NewGuid():N}", itemAddedAt.AddSeconds(1)));
+            ShareTokens.New(), itemAddedAt.AddSeconds(1)));
 
         // Assert — the list materialises AND the earlier item survived rather than being dropped
         var response = await WaitForGiftListAsync(listId, ownerId);
@@ -505,7 +505,7 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
         var listId = Guid.NewGuid();
         var ownerId = Guid.NewGuid();
         await gateway.GiftListsBus.Publish(new GiftListCreatedV1(
-            listId, ownerId, "Birthday Wishlist", DateTimeOffset.UtcNow.AddDays(7), $"share-{Guid.NewGuid():N}", DateTimeOffset.UtcNow));
+            listId, ownerId, "Birthday Wishlist", DateTimeOffset.UtcNow.AddDays(7), ShareTokens.New(), DateTimeOffset.UtcNow));
         await WaitForGiftListAsync(listId, ownerId);
         return (listId, ownerId);
     }
