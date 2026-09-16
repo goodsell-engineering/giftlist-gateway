@@ -153,11 +153,23 @@ public sealed class GatewayFixture : IAsyncLifetime
     /// <summary>
     /// CONVENTIONS.md "Testing": isolate by dropping the database between tests, never by restarting a
     /// container. Mirrors <c>GiftLists.IntegrationTests.Fixtures.GiftListsFixture.ResetAsync</c>;
-    /// unlike that one there is no unique index to re-apply — the ownerId index is not a
-    /// correctness requirement the way GiftLists' shareToken one is, only a performance one, so a
-    /// test running before it exists would still pass, just via a collection scan.
+    /// unlike that one there are no unique indexes to re-apply — <c>ownerId</c> and
+    /// <c>shareToken</c> are both non-unique, performance-only indexes here (neither is a
+    /// correctness requirement the way GiftLists' own unique <c>shareToken</c> index is), so a
+    /// test running before either exists would still pass, just via a collection scan.
     /// </summary>
     public Task ResetAsync() => Database.Client.DropDatabaseAsync(DatabaseName);
+
+    /// <summary>
+    /// A scope into the Gateway's own container (mirrors
+    /// <c>GiftListsFixture.CreateGiftListsScope</c>'s own idea/naming) — needed because
+    /// <c>IGiftListProjectionRepository</c> (and everything else registered by
+    /// <c>AddGatewayInfrastructure</c>) is <c>Scoped</c>, so resolving it straight from
+    /// <c>_gatewayFactory.Services</c> (the root provider) throws under ASP.NET Core's scope
+    /// validation. Caller-disposed, one scope per test, same as GiftLists' own — nothing here
+    /// needs a scope held open for the whole suite.
+    /// </summary>
+    public IServiceScope CreateGatewayScope() => _gatewayFactory.Services.CreateScope();
 
     /// <summary>
     /// .NET's environment-variable configuration provider maps <c>Section:Key</c> to

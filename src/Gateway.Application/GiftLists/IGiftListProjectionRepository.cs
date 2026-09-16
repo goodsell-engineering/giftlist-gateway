@@ -51,6 +51,16 @@ public interface IGiftListProjectionRepository
     /// <summary>Owner-scoped at the query itself (ARCHITECTURE.md "Auth & sharing") — the only filter <c>myGiftLists</c> ever applies.</summary>
     Task<IReadOnlyList<GiftListProjection>> FindByOwnerAsync(Guid ownerId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// GL-31: the read-model half of the share link — looks a projection up by its
+    /// <c>shareToken</c> rather than its <c>ListId</c>/<c>OwnerId</c>. Same null-when-absent
+    /// convention as <see cref="FindByIdAsync"/>, including for a stub row
+    /// (<c>HasCreated == false</c>) or a soft-deleted one. Deliberately stops here: no GraphQL
+    /// query, resolver or interactor calls this yet — GL-32 owns the privacy decision about what
+    /// an unauthenticated caller may see through it, and adds the surface that calls it.
+    /// </summary>
+    Task<GiftListProjection?> FindByShareTokenAsync(string shareToken, CancellationToken cancellationToken);
+
     /// <exception cref="GiftListProjectionApplyExhaustedException">
     /// The compare-and-set retry loop exhausted its attempt cap (GL-76) — a sustained, pathological
     /// burst of concurrent writers to this same list.

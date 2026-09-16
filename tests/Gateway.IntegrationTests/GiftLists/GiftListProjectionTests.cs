@@ -1,7 +1,10 @@
 using System.Text.Json;
+using Gateway.Application.GiftLists;
+using Gateway.Infrastructure.Platform;
 using Gateway.IntegrationTests.Fixtures;
 using Gateway.IntegrationTests.Support;
 using GiftLists.Contracts.GiftLists.Events;
+using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson;
 using MongoDB.Driver;
 
@@ -241,6 +244,83 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
         // Assert — the add lost: no item, resurrected or otherwise
         var response = await QueryGiftListAsync(listId, ownerId);
         Assert.Empty(response!.Value.GetProperty("items").EnumerateArray());
+    }
+
+    /// <summary>
+    /// GL-31: the read-model half of the share link. No GraphQL surface calls
+    /// <c>FindByShareTokenAsync</c> yet (GL-32 owns that), so this reaches the port directly
+    /// through the composition root (<see cref="GatewayFixture.CreateGatewayScope"/>,
+    /// CONVENTIONS.md "Reaching an internal from a test" route 2) rather than waiting for a query
+    /// that does not exist.
+    /// </summary>
+    [Fact]
+    public async Task FindByShareTokenAsync_ShouldReturnTheList_WhenTheTokenMatches()
+    {
+        // Arrange
+        var listId = Guid.NewGuid();
+        var ownerId = Guid.NewGuid();
+        var shareToken = $"share-{Guid.NewGuid():N}";
+        await gateway.GiftListsBus.Publish(new GiftListCreatedV1(
+            listId, ownerId, "Birthday Wishlist", DateTimeOffset.UtcNow.AddDays(7), shareToken, DateTimeOffset.UtcNow));
+        await WaitForGiftListAsync(listId, ownerId);
+        using var scope = gateway.CreateGatewayScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IGiftListProjectionRepository>();
+
+        // Act
+        var found = await Eventually.Async(
+            () => repository.FindByShareTokenAsync(shareToken, CancellationToken.None),
+            projection => projection is not null,
+            WaitTimeout);
+
+        // Assert
+        Assert.Equal(listId, found!.ListId);
+        Assert.Equal(ownerId, found.OwnerId);
+        Assert.Equal(shareToken, found.ShareToken);
+    }
+
+    [Fact]
+    public async Task FindByShareTokenAsync_ShouldReturnNull_WhenNoListCarriesTheToken()
+    {
+        // Arrange
+        var unknownToken = $"share-{Guid.NewGuid():N}";
+        using var scope = gateway.CreateGatewayScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IGiftListProjectionRepository>();
+
+        // Act
+        var found = await repository.FindByShareTokenAsync(unknownToken, CancellationToken.None);
+
+        // Assert
+        Assert.Null(found);
+    }
+
+    /// <summary>
+    /// CONVENTIONS.md "Persistence" — indexes must be "applied at startup, asserted in
+    /// integration tests", not just declared and trusted. <see cref="GatewayFixture.ResetAsync"/>
+    /// drops the whole database (including whatever <c>Gateway.Host</c>'s own startup applied
+    /// before this test ever ran), so this re-applies both indexes itself through the same public
+    /// entry point the real host calls — asserting on leftovers from an earlier test would prove
+    /// nothing about whether <c>GiftListProjectionRepository.EnsureIndexesAsync</c> itself still
+    /// creates them. Covers both index names in one test: <c>ownerId</c> was already uncovered
+    /// before GL-31 added <c>shareToken</c> beside it, and there is no reason to leave one
+    /// covered and the other not now that both are asserted the same way.
+    /// </summary>
+    [Fact]
+    public async Task EnsureIndexesAsync_ShouldCreateTheOwnerIdAndShareTokenIndexes()
+    {
+        // Arrange
+        using var scope = gateway.CreateGatewayScope();
+
+        // Act
+        await GatewayInfrastructureServiceCollectionExtensions.EnsureIndexesAsync(scope.ServiceProvider, CancellationToken.None);
+        var indexes = await gateway.Database
+            .GetCollection<BsonDocument>(GatewayFixture.GiftListProjectionsCollectionName)
+            .Indexes.List()
+            .ToListAsync();
+
+        // Assert
+        var indexNames = indexes.Select(i => i["name"].AsString).ToList();
+        Assert.Contains("ownerId", indexNames);
+        Assert.Contains("shareToken", indexNames);
     }
 
     [Fact]

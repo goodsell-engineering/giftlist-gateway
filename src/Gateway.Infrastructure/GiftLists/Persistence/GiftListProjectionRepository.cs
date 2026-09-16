@@ -68,6 +68,15 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
         return documents.Select(GiftListProjectionDocumentMapper.ToProjection).ToList();
     }
 
+    public async Task<GiftListProjection?> FindByShareTokenAsync(string shareToken, CancellationToken cancellationToken)
+    {
+        var document = await _giftListProjections
+            .Find(d => d.ShareToken == shareToken && d.HasCreated && !d.IsDeleted)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return document is null ? null : GiftListProjectionDocumentMapper.ToProjection(document);
+    }
+
     public Task ApplyListCreatedAsync(RecordGiftListCreatedRequest request, CancellationToken cancellationToken) =>
         ApplyAsync(request.ListId, existing => MutateOnCreated(existing, request), cancellationToken);
 
@@ -84,10 +93,34 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
         ApplyAsync(request.ListId, existing => MutateOnItemRemoved(existing, request), cancellationToken);
 
     /// <summary>
-    /// The <c>ownerId</c> index <c>myGiftLists</c> relies on. Applied at startup, same as
-    /// GiftLists' own <c>shareToken</c> index (ARCHITECTURE.md "Data model") — a correctness/performance
-    /// requirement, not something left to be inferred from application code (CONVENTIONS.md "Persistence").
-    /// Not unique: many lists share one owner.
+    /// The <c>ownerId</c> and <c>shareToken</c> indexes <c>myGiftLists</c>/<see cref="FindByShareTokenAsync"/>
+    /// rely on. Applied at startup, same as GiftLists' own <c>shareToken</c> index (ARCHITECTURE.md "Data model")
+    /// — a correctness/performance requirement, not something left to be inferred from application
+    /// code (CONVENTIONS.md "Persistence").
+    ///
+    /// Both are performance indexes, <em>not unique</em> — deliberately, unlike GiftLists' own
+    /// unique <c>shareToken_unique</c>. The reason is ownership, not feasibility: GiftLists is the
+    /// system of record for token uniqueness (its own creation path rejects a collision before
+    /// ever publishing <c>GiftListCreatedV1</c>), so this projection never needs to enforce it
+    /// itself — it only needs to be able to find a document that carries one, and a non-unique
+    /// index already does that.
+    ///
+    /// A <em>plain</em> unique index here would additionally be a trap, which is worth naming so
+    /// nobody reaches for one out of habit: CONVENTIONS.md "Messaging"'s at-least-once,
+    /// out-of-order delivery means <see cref="Stub"/> rows created for an item/rename event that
+    /// outraces its own list's <c>GiftListCreatedV1</c> (GL-64) all carry
+    /// <see cref="GiftListProjectionDocument.ShareToken"/> <c>== string.Empty</c> until that
+    /// Created event lands and fills the real token in. Two different lists can each have such a
+    /// stub in flight at once, so a plain unique index on <c>shareToken</c> would make the second
+    /// stub's insert fail with a duplicate-key error that <see cref="TryApplyOnceAsync"/> cannot
+    /// tell apart from a lost race on the *same* document — it would retry forever against a real
+    /// collision, not a transient one, and eventually throw
+    /// <see cref="GiftListProjectionApplyExhaustedException"/> for a perfectly legitimate event.
+    /// (A partial unique index scoped to <c>HasCreated == true</c> would dodge that specific trap
+    /// — the option was available, not foreclosed — but there is still nothing for it to
+    /// *enforce*: GiftLists already guarantees at most one materialised document ever carries a
+    /// given real token, so a partial-unique index here would only be re-asserting, at strictly
+    /// more risk, a guarantee this service does not own.)
     /// </summary>
     public static Task EnsureIndexesAsync(IMongoDatabase database, CancellationToken cancellationToken)
     {
@@ -95,8 +128,11 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
         var ownerIdIndex = new CreateIndexModel<GiftListProjectionDocument>(
             Builders<GiftListProjectionDocument>.IndexKeys.Ascending(d => d.OwnerId),
             new CreateIndexOptions { Name = "ownerId" });
+        var shareTokenIndex = new CreateIndexModel<GiftListProjectionDocument>(
+            Builders<GiftListProjectionDocument>.IndexKeys.Ascending(d => d.ShareToken),
+            new CreateIndexOptions { Name = "shareToken" });
 
-        return collection.Indexes.CreateOneAsync(ownerIdIndex, cancellationToken: cancellationToken);
+        return collection.Indexes.CreateManyAsync([ownerIdIndex, shareTokenIndex], cancellationToken);
     }
 
     /// <exception cref="GiftListProjectionApplyExhaustedException">
