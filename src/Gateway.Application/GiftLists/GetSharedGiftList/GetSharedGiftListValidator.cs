@@ -35,6 +35,16 @@ internal sealed partial class GetSharedGiftListValidator : IValidator<GetSharedG
             : GiftListErrors.InvalidShareToken;
     }
 
-    [GeneratedRegex("^[0-9A-Za-z]{21}$", RegexOptions.CultureInvariant)]
+    /// <summary>
+    /// <c>\A</c>/<c>\z</c>, deliberately, not <c>^</c>/<c>$</c>. In .NET <c>$</c> matches at the
+    /// end of input <em>or immediately before a trailing newline</em>, so the obvious
+    /// <c>^[0-9A-Za-z]{21}$</c> accepts a 22-character token ending in <c>\n</c> — and a GraphQL
+    /// variable is a JSON string, so an anonymous caller can send exactly that (Batch 34 review).
+    /// The consequence was small (an equality match on an indexed field, so the caller reached
+    /// <c>not_found</c> instead of <c>invalid_share_token</c>) but it made this file's own summary
+    /// false, which is the part that matters: a boundary guard that overclaims is worse than one
+    /// that is merely narrow. <c>\z</c> is the true end of input.
+    /// </summary>
+    [GeneratedRegex(@"\A[0-9A-Za-z]{21}\z", RegexOptions.CultureInvariant)]
     private static partial Regex ShareTokenPattern();
 }

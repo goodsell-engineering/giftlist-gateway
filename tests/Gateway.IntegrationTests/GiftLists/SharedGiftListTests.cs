@@ -125,6 +125,13 @@ public sealed class SharedGiftListTests(GatewayFixture gateway) : IAsyncLifetime
     ///
     /// The <c>share-…</c> rows are not invented: they are the shapes this suite itself used to
     /// fabricate before GL-104, which no publisher could ever emit.
+    ///
+    /// The trailing-newline row is the one that was actually getting through (Batch 34 review).
+    /// Note what the gap looked like from inside: the one-short and one-over rows below already
+    /// covered "wrong length" as thoroughly as anyone would think to, which is exactly why nobody
+    /// suspected the <em>anchor</em> — .NET's <c>$</c> matches before a trailing <c>\n</c>, so a
+    /// 22-character token passed a rule that reads as though it cannot. Length coverage says
+    /// nothing about where the pattern thinks the string ends.
     /// </summary>
     [Theory]
     [InlineData("")]
@@ -133,6 +140,7 @@ public sealed class SharedGiftListTests(GatewayFixture gateway) : IAsyncLifetime
     [InlineData("0123456789abcdef0123")] // 20: one short
     [InlineData("0123456789abcdef012345")] // 22: one over
     [InlineData("0123456789abcdef0123!")] // 21, but '!' is not base62
+    [InlineData("0123456789abcdef01234\n")] // 22: a legal 21-character token and then a newline — see the summary
     public async Task SharedGiftList_ShouldReturnBadUserInput_WhenTheTokenIsNotTwentyOneBase62Characters(string token)
     {
         // Arrange — nothing: an ill-formed token is rejected before any list could be relevant
@@ -145,6 +153,34 @@ public sealed class SharedGiftListTests(GatewayFixture gateway) : IAsyncLifetime
         var error = Assert.Single(response.Errors);
         Assert.Equal("gateway.invalid_share_token", error.ErrorCode);
         Assert.Equal("BAD_USER_INPUT", error.Code);
+    }
+
+    /// <summary>
+    /// The token comparison is case-sensitive, and that is load-bearing: <c>ShareToken</c>'s
+    /// alphabet is base62, so <c>aB…</c> and <c>Ab…</c> are two different capabilities and one
+    /// must not open the other's list. Deterministic on purpose — <see cref="ShareTokens.New"/>
+    /// draws at random, so it makes mixed case overwhelmingly likely but pins nothing (Batch 34
+    /// review: while that helper produced hex, the suite never presented a token whose case
+    /// mattered at all).
+    /// </summary>
+    [Fact]
+    public async Task SharedGiftList_ShouldReturnNotFound_WhenTheTokenDiffersOnlyByCase()
+    {
+        // Arrange
+        const string shareToken = "aBcDeFgHiJkLmNoPqRsTu";
+        const string swappedCase = "AbCdEfGhIjKlMnOpQrStU";
+        Assert.Equal(shareToken.Length, swappedCase.Length);
+        await PublishListAsync(Guid.NewGuid(), shareToken, DateTimeOffset.UtcNow.AddDays(7));
+        await WaitForSharedGiftListAsync(shareToken);
+
+        // Act — same letters, every one of them the other case: a well-formed token, and not this one
+        var response = await GraphQlClient.QueryAsync(
+            gateway.GraphQlHttpClient, GiftListGraphQlQueries.SharedGiftList, new { token = swappedCase });
+
+        // Assert
+        var error = Assert.Single(response.Errors);
+        Assert.Equal("gateway.not_found", error.ErrorCode);
+        Assert.Equal("NOT_FOUND", error.Code);
     }
 
     [Fact]
@@ -224,9 +260,12 @@ public sealed class SharedGiftListTests(GatewayFixture gateway) : IAsyncLifetime
     }
 
     /// <summary>
-    /// Waits for the raw stub document, because a stub is by design invisible through every query
-    /// this Gateway exposes — CONVENTIONS.md "Testing" permits reading infrastructure directly, and
-    /// there is no public surface that could report "the stub has landed".
+    /// Waits for the raw stub document by reading the projection's Mongo collection. No public
+    /// surface could report that a stub has landed — a stub is by design invisible through every
+    /// query this Gateway exposes — so the only thing that can say it arrived is the collection it
+    /// was written to. That collection is the real database the running Gateway writes to rather
+    /// than a stand-in (CONVENTIONS.md "Testing": integration tests run all infrastructure for
+    /// real, via Testcontainers), so what this reads is the production write path's own output.
     /// </summary>
     private Task<BsonDocument> WaitForStubAsync(Guid listId) =>
         Eventually.Async(
