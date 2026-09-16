@@ -37,7 +37,7 @@ public class RepoRootFileSyncTests
     /// but it may never shrink to nothing: an emptied manifest passes every assertion below
     /// while enforcing nothing, which is the failure mode this floor exists to catch.
     /// </summary>
-    private static readonly string[] MustBeListed = { "Directory.Build.props" };
+    private static readonly string[] MustBeListed = { "Directory.Build.props", "nuget.config", "Directory.Build.targets" };
 
     [Fact]
     public void RepoRootFiles_ShouldMatchTheCheckedInManifest()
