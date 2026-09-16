@@ -6,7 +6,7 @@
          making Mongo/Rebus/HotChocolate reachable. The Gateway has no Domain project of its own
          (ARCHITECTURE.md "Mapping to Clean Architecture's rings") — its read model lives here as plain projection records instead of
          an aggregate. -->
-    <PackageReference Include="BuildingBlocks" Version="0.1.0" />
+    <PackageReference Include="BuildingBlocks" Version="[0.1.0]" />
   </ItemGroup>
 
   <ItemGroup>
