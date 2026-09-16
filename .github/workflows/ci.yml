@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# GL-30: build + unit test only. Same shape and reasoning as giftlist-identity's workflow (read
+# its comments for the full account) — this repo restores from ../local-feed the widest set of
+# any service repo: BuildingBlocks, BuildingBlocks.Infrastructure, BuildingBlocks.Testing (its
+# own IntegrationTests project), Identity.Contracts and GiftLists.Contracts (it is the one
+# service that talks to both). Three sibling checkouts, not one, follow from that.
+#
+# A second, independent job builds the generated TypeScript client (clients/typescript/) that
+# giftlist-web installs from ../local-feed as a tarball — this repo owns the .proto files and
+# that generator (clients/typescript/README.md), so proving it still builds is this repo's own
+# "build" scope, not giftlist-web's.
+jobs:
+  dotnet-build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout giftlist-gateway
+        uses: actions/checkout@v4
+        with:
+          path: giftlist-gateway
+
+      - name: Checkout giftlist-buildingblocks (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: goodsell-engineering/giftlist-buildingblocks
+          path: giftlist-buildingblocks
+
+      - name: Checkout giftlist-identity (sibling, for Identity.Contracts)
+        uses: actions/checkout@v4
+        with:
+          repository: goodsell-engineering/giftlist-identity
+          path: giftlist-identity
+
+      - name: Checkout giftlist-giftlists (sibling, for GiftLists.Contracts)
+        uses: actions/checkout@v4
+        with:
+          repository: goodsell-engineering/giftlist-giftlists
+          path: giftlist-giftlists
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Pack dependency packages into a job-local feed
+        run: |
+          set -euo pipefail
+          FEED="$GITHUB_WORKSPACE/local-feed"
+          mkdir -p "$FEED"
+          : > "$GITHUB_WORKSPACE/expected-versions.env"
+          for proj in \
+            giftlist-buildingblocks/src/BuildingBlocks/BuildingBlocks.csproj \
+            giftlist-buildingblocks/src/BuildingBlocks.Infrastructure/BuildingBlocks.Infrastructure.csproj \
+            giftlist-buildingblocks/src/BuildingBlocks.Testing/BuildingBlocks.Testing.csproj \
+            giftlist-identity/src/Identity.Contracts/Identity.Contracts.csproj \
+            giftlist-giftlists/src/GiftLists.Contracts/GiftLists.Contracts.csproj; do
+            id=$(dotnet msbuild "$proj" -getProperty:PackageId -nologo)
+            ver=$(dotnet msbuild "$proj" -getProperty:Version -nologo)
+            dotnet pack "$proj" -c Release -o "$FEED" --nologo
+            echo "$id=$ver" >> "$GITHUB_WORKSPACE/expected-versions.env"
+          done
+          echo "Packed into $FEED:"
+          ls -la "$FEED"
+
+      - name: Restore
+        working-directory: giftlist-gateway
+        run: dotnet restore Gateway.sln -v n
+
+      - name: Build
+        working-directory: giftlist-gateway
+        run: dotnet build Gateway.sln --no-restore -c Release
+
+      # Only *.UnitTests runs — *.IntegrationTests is built above (proving it compiles) but never
+      # executed, since it starts real Mongo/RabbitMQ via Testcontainers (CONVENTIONS.md
+      # "Testing") and hosts Gateway.Host in-memory over them. Naming the exact project rather
+      # than the solution or a --filter over it is what makes that a structural guarantee.
+      - name: Unit tests
+        working-directory: giftlist-gateway
+        run: >
+          dotnet test tests/Gateway.UnitTests/Gateway.UnitTests.csproj
+          --no-build -c Release --logger "console;verbosity=normal"
+
+      # See giftlist-identity's workflow for the full rationale: proves the resolved version for
+      # each GiftList package id is the one this job just built from source, not nuget.org's
+      # same-named impostor at a different version (BuildingBlocks 1.0.0, Identity.Contracts
+      # 1.0.14 today) or a stale cache.
+      - name: Prove which package versions actually resolved
+        working-directory: giftlist-gateway
+        run: |
+          set -euo pipefail
+          echo "== Packed this run (source of truth) =="
+          cat "$GITHUB_WORKSPACE/expected-versions.env"
+          echo
+          echo "== Resolved by Gateway.sln =="
+          dotnet list Gateway.sln package --include-transitive --format json > /tmp/resolved.json
+          fail=0
+          while IFS='=' read -r id expected; do
+            [ -z "$id" ] && continue
+            resolved=$(jq -r --arg id "$id" '
+              [.projects[].frameworks[]? |
+                ((.topLevelPackages // []) + (.transitivePackages // []))[] |
+                select(.id == $id) | .resolvedVersion] | unique | .[]?
+            ' /tmp/resolved.json)
+            if [ -z "$resolved" ]; then
+              echo "  $id: not referenced by this solution (fine if unused by this repo's projects)"
+              continue
+            fi
+            while IFS= read -r v; do
+              echo "  $id resolved to $v (this job packed $expected from source)"
+              if [ "$v" != "$expected" ]; then
+                echo "  FAIL: $id resolved to $v but this job packed $expected from source." >&2
+                echo "        A mismatch means the restore did not come from ../local-feed as" >&2
+                echo "        expected -- check nuget.config's packageSourceMapping." >&2
+                fail=1
+              fi
+            done <<< "$resolved"
+          done < "$GITHUB_WORKSPACE/expected-versions.env"
+          exit $fail
+
+  typescript-client-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/typescript
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: clients/typescript/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # generate (buf, from ../../protos) + tsc — proves the client this repo publishes to the
+      # local feed for giftlist-web still builds against this repo's own .proto files.
+      - name: Build (buf generate + tsc)
+        run: npm run build
