@@ -1,5 +1,4 @@
 using BuildingBlocks.Messaging;
-using Gateway.Application.GiftLists;
 using Gateway.Infrastructure.GiftLists.Grpc;
 using Gateway.Infrastructure.Users.Grpc;
 using Gateway.IntegrationTests.Support;
@@ -44,18 +43,6 @@ public sealed class GatewayFixture : IAsyncLifetime
     private GiftListsEventPublisher _giftListsEventPublisher = null!;
     private GiftListsCommandListener _giftListsCommandListener = null!;
 
-    /// <summary>
-    /// Kept open for the fixture's own lifetime (mirrors <c>GiftListsFixture.CreateGiftListsScope</c>'s
-    /// own idea, but held rather than created per call) so <see cref="GiftListProjections"/> can be
-    /// a plain property: <c>IGiftListProjectionRepository</c> is registered <c>Scoped</c>, so
-    /// resolving it straight from <c>_gatewayFactory.Services</c> (the root provider) throws
-    /// under ASP.NET Core's scope validation, the same way <c>EventProbe</c>/<c>Database</c> get
-    /// away with it only because those two are <c>Singleton</c>. Safe to hold for the whole suite:
-    /// the repository itself carries no per-request mutable state (CONVENTIONS.md "Persistence" —
-    /// it wraps an <c>IMongoCollection</c> and a stateless retry policy).
-    /// </summary>
-    private IServiceScope _gatewayScope = null!;
-
     public AuthService.AuthServiceClient AuthClient { get; private set; } = null!;
 
     /// <summary>GL-71: the grpc-web client for the GiftLists command surface.</summary>
@@ -64,14 +51,6 @@ public sealed class GatewayFixture : IAsyncLifetime
     public HttpClient GraphQlHttpClient { get; private set; } = null!;
 
     public IMongoDatabase Database { get; private set; } = null!;
-
-    /// <summary>
-    /// The real, composition-root-registered port (CONVENTIONS.md "Reaching an internal from a
-    /// test" route 2 — resolved through the composition root, not a grant) — GL-31 needs to reach
-    /// <see cref="IGiftListProjectionRepository.FindByShareTokenAsync"/> directly, since nothing
-    /// public calls it yet (that is GL-32's job, not this one's).
-    /// </summary>
-    public IGiftListProjectionRepository GiftListProjections { get; private set; } = null!;
 
     /// <summary>GL-73: see <see cref="GiftListsEventProbe"/>'s own doc comment.</summary>
     public GiftListsEventProbe EventProbe { get; private set; } = null!;
@@ -151,14 +130,11 @@ public sealed class GatewayFixture : IAsyncLifetime
         GraphQlHttpClient = _gatewayFactory.CreateClient();
         Database = _gatewayFactory.Services.GetRequiredService<IMongoDatabase>();
         EventProbe = _gatewayFactory.Services.GetRequiredService<GiftListsEventProbe>();
-        _gatewayScope = _gatewayFactory.Services.CreateScope();
-        GiftListProjections = _gatewayScope.ServiceProvider.GetRequiredService<IGiftListProjectionRepository>();
     }
 
     public async Task DisposeAsync()
     {
         GraphQlHttpClient.Dispose();
-        _gatewayScope.Dispose();
         _gatewayFactory.Dispose();
         await _identityResponderHost.StopAsync();
         _identityResponderHost.Dispose();
@@ -177,11 +153,23 @@ public sealed class GatewayFixture : IAsyncLifetime
     /// <summary>
     /// CONVENTIONS.md "Testing": isolate by dropping the database between tests, never by restarting a
     /// container. Mirrors <c>GiftLists.IntegrationTests.Fixtures.GiftListsFixture.ResetAsync</c>;
-    /// unlike that one there is no unique index to re-apply — the ownerId index is not a
-    /// correctness requirement the way GiftLists' shareToken one is, only a performance one, so a
-    /// test running before it exists would still pass, just via a collection scan.
+    /// unlike that one there are no unique indexes to re-apply — <c>ownerId</c> and
+    /// <c>shareToken</c> are both non-unique, performance-only indexes here (neither is a
+    /// correctness requirement the way GiftLists' own unique <c>shareToken</c> index is), so a
+    /// test running before either exists would still pass, just via a collection scan.
     /// </summary>
     public Task ResetAsync() => Database.Client.DropDatabaseAsync(DatabaseName);
+
+    /// <summary>
+    /// A scope into the Gateway's own container (mirrors
+    /// <c>GiftListsFixture.CreateGiftListsScope</c>'s own idea/naming) — needed because
+    /// <c>IGiftListProjectionRepository</c> (and everything else registered by
+    /// <c>AddGatewayInfrastructure</c>) is <c>Scoped</c>, so resolving it straight from
+    /// <c>_gatewayFactory.Services</c> (the root provider) throws under ASP.NET Core's scope
+    /// validation. Caller-disposed, one scope per test, same as GiftLists' own — nothing here
+    /// needs a scope held open for the whole suite.
+    /// </summary>
+    public IServiceScope CreateGatewayScope() => _gatewayFactory.Services.CreateScope();
 
     /// <summary>
     /// .NET's environment-variable configuration provider maps <c>Section:Key</c> to

@@ -99,22 +99,28 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
     /// code (CONVENTIONS.md "Persistence").
     ///
     /// Both are performance indexes, <em>not unique</em> — deliberately, unlike GiftLists' own
-    /// unique <c>shareToken_unique</c>. GiftLists is the system of record for token uniqueness
-    /// (its own creation path rejects a collision before ever publishing <c>GiftListCreatedV1</c>),
-    /// so this projection never needs to enforce it itself; it only needs to be able to find a
-    /// document that carries one. Asserting uniqueness here anyway would be actively wrong given
-    /// how this projection is built (CONVENTIONS.md "Messaging" — at-least-once, out-of-order
-    /// delivery): <see cref="Stub"/> rows created for an item/rename event that outraces its own
-    /// list's <c>GiftListCreatedV1</c> (GL-64) all carry <see cref="GiftListProjectionDocument.ShareToken"/>
-    /// <c>== string.Empty</c> until that Created event lands and fills the real token in. Two
-    /// different lists can each have such a stub in flight at once, so a unique index on
-    /// <c>shareToken</c> would make the second stub's insert fail with a duplicate-key error that
-    /// <see cref="TryApplyOnceAsync"/> cannot tell apart from a lost race on the *same* document —
-    /// it would retry forever against a real collision, not a transient one, and eventually throw
+    /// unique <c>shareToken_unique</c>. The reason is ownership, not feasibility: GiftLists is the
+    /// system of record for token uniqueness (its own creation path rejects a collision before
+    /// ever publishing <c>GiftListCreatedV1</c>), so this projection never needs to enforce it
+    /// itself — it only needs to be able to find a document that carries one, and a non-unique
+    /// index already does that.
+    ///
+    /// A <em>plain</em> unique index here would additionally be a trap, which is worth naming so
+    /// nobody reaches for one out of habit: CONVENTIONS.md "Messaging"'s at-least-once,
+    /// out-of-order delivery means <see cref="Stub"/> rows created for an item/rename event that
+    /// outraces its own list's <c>GiftListCreatedV1</c> (GL-64) all carry
+    /// <see cref="GiftListProjectionDocument.ShareToken"/> <c>== string.Empty</c> until that
+    /// Created event lands and fills the real token in. Two different lists can each have such a
+    /// stub in flight at once, so a plain unique index on <c>shareToken</c> would make the second
+    /// stub's insert fail with a duplicate-key error that <see cref="TryApplyOnceAsync"/> cannot
+    /// tell apart from a lost race on the *same* document — it would retry forever against a real
+    /// collision, not a transient one, and eventually throw
     /// <see cref="GiftListProjectionApplyExhaustedException"/> for a perfectly legitimate event.
-    /// Non-unique avoids that failure mode entirely, at the cost of relying on GiftLists (not this
-    /// projection) to guarantee at most one *materialised* (<c>HasCreated == true</c>) document
-    /// ever carries a given real token — which GiftLists already does.
+    /// (A partial unique index scoped to <c>HasCreated == true</c> would dodge that specific trap
+    /// — the option was available, not foreclosed — but there is still nothing for it to
+    /// *enforce*: GiftLists already guarantees at most one materialised document ever carries a
+    /// given real token, so a partial-unique index here would only be re-asserting, at strictly
+    /// more risk, a guarantee this service does not own.)
     /// </summary>
     public static Task EnsureIndexesAsync(IMongoDatabase database, CancellationToken cancellationToken)
     {
