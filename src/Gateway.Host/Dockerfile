@@ -11,10 +11,11 @@
 # only see its own context: ../local-feed sits outside this repo, so a restore here could not
 # resolve them no matter how it were written (ARCHITECTURE.md "Making the local feed visible to
 # containers"). The documented answer is to restore at container *runtime*, where compose has
-# mounted the feed as a second volume at /feed and the repo's nuget.config points at it. Those
-# two pieces are GL-26 and GL-29; until they land this image builds and starts, and `dotnet
-# watch` fails its first restore. Do not "fix" that by baking a restore back in here — the only
-# way to make it work is to widen the build context to the parent of every repo, which is the
+# mounted the feed as a second volume at /local-feed (GL-29) and the repo's nuget.config (GL-26)
+# names the feed as "../local-feed", which resolves against nuget.config's own directory
+# (this repo's root, /src at runtime) to that exact mount point — no container-specific path
+# needed. Do not "fix" the lack of a restore layer by baking one back in here — the only way to
+# make that work is to widen the build context to the parent of every repo, which is the
 # secondary approach that section deliberately does not make the default.
 #
 # The cost of having no restore layer: the first `dotnet watch` inside a fresh container restores
