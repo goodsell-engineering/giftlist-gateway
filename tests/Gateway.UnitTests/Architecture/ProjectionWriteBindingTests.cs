@@ -3,10 +3,16 @@ using ArchitectureTests.Support;
 namespace ArchitectureTests;
 
 /// <summary>
-/// Binds CONVENTIONS.md "Messaging"'s blind-insert rule to a real file. Gateway-only, and deliberately
-/// not part of the synced common set: Gateway owns the only projection in the system, so this is
-/// the only repo with something to bind to. Same precedent as
-/// <c>Gateway.UnitTests/Architecture/GrpcStatusCodeCastTests.cs</c>.
+/// Binds CONVENTIONS.md "Messaging"'s blind-insert rule to real files. Per-repo, and deliberately
+/// not part of the synced common set: each repo that owns a projection names its own here (this
+/// used to say Gateway owned the only projection in the system — false since GL-34 gave
+/// Reservations one of its own, and doubly so since GL-38 gave the Gateway a second; GL-115
+/// folded the correction into the PRs already touching each copy). Same precedent as
+/// <c>Gateway.UnitTests/Architecture/GrpcStatusCodeCastTests.cs</c>. Gateway binds both of its
+/// projection repositories: the gift-list one (a versioned compare-and-set loop) and the
+/// reservation one (a plain keyed upsert) are the two write shapes this repo actually has, and a
+/// detector that recognises one and not the other is exactly the blindness this test exists to
+/// catch.
 ///
 /// <para><b>Why this exists.</b> <c>ProjectionWriteRuleTests</c> is two tests, and neither one
 /// constrains the detector against production code. The scan skips any file the detector does
@@ -17,19 +23,18 @@ namespace ArchitectureTests;
 /// sites in Gateway's real repository, and the per-file stale guard stayed silent because that
 /// file also reads (GL-61 review). Fixtures cannot catch that. A named real file can.</para>
 ///
-/// <para>If <see cref="ProjectionRepositoryPath"/> is renamed or moved, update it here rather
-/// than deleting this test — a rename is exactly the moment the binding matters most.</para>
+/// <para>If a bound file is renamed or moved, update its row here rather than deleting it — a
+/// rename is exactly the moment the binding matters most.</para>
 /// </summary>
 public class ProjectionWriteBindingTests
 {
-    private const string ProjectionRepositoryPath =
-        "src/Gateway.Infrastructure/GiftLists/Persistence/GiftListProjectionRepository.cs";
-
-    [Fact]
-    public void TheBlindInsertProbe_ShouldStillSeeTheRealProjectionRepository()
+    [Theory]
+    [InlineData("src/Gateway.Infrastructure/GiftLists/Persistence/GiftListProjectionRepository.cs")]
+    [InlineData("src/Gateway.Infrastructure/Reservations/Persistence/ReservationProjectionRepository.cs")]
+    public void TheBlindInsertProbe_ShouldStillSeeTheRealProjectionRepository(string projectionRepositoryPath)
     {
         // Arrange
-        var path = Path.Combine(RepoDiscovery.RepoRoot, ProjectionRepositoryPath.Replace('/', Path.DirectorySeparatorChar));
+        var path = Path.Combine(RepoDiscovery.RepoRoot, projectionRepositoryPath.Replace('/', Path.DirectorySeparatorChar));
         var failures = new List<string>();
 
         // Act
@@ -40,7 +45,7 @@ public class ProjectionWriteBindingTests
         if (text is null)
         {
             failures.Add(
-                $"'{ProjectionRepositoryPath}' does not exist. If it moved, point this test at its " +
+                $"'{projectionRepositoryPath}' does not exist. If it moved, point this test at its " +
                 "new home; the CONVENTIONS.md \"Messaging\" blind-insert rule has no other binding to real code");
         }
         else
@@ -63,8 +68,8 @@ public class ProjectionWriteBindingTests
 
         // Assert
         Assert.True(failures.Count == 0,
-            $"The CONVENTIONS.md \"Messaging\" blind-insert rule has come unbound from '{ProjectionRepositoryPath}', the only " +
-            "real projection in the system: " + string.Join("; ", failures) +
+            $"The CONVENTIONS.md \"Messaging\" blind-insert rule has come unbound from '{projectionRepositoryPath}', one of " +
+            "this repo's real projections: " + string.Join("; ", failures) +
             $". Detector said (recognised: {recognised}, write sites: {sites.Count}). Fix the " +
             "detector in Support/ProjectionWriteProbe.cs — the rule is not enforcing anything " +
             "against production code until this passes.");

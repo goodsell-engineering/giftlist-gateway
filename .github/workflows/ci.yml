@@ -8,8 +8,11 @@ on:
 # GL-30: build + unit test only. Same shape and reasoning as giftlist-identity's workflow (read
 # its comments for the full account) — this repo restores from ../local-feed the widest set of
 # any service repo: BuildingBlocks, BuildingBlocks.Infrastructure, BuildingBlocks.Testing (its
-# own IntegrationTests project), Identity.Contracts and GiftLists.Contracts (it is the one
-# service that talks to both). Three sibling checkouts, not one, follow from that.
+# own IntegrationTests project), Identity.Contracts, GiftLists.Contracts and, since GL-38,
+# Reservations.Contracts (it is the one service that talks to all three). Four sibling checkouts,
+# not one, follow from that. Batch 36's lesson applies to every future PackageReference too: a
+# package this job does not pack is a package CI cannot restore, however green the dev box that
+# already had it in ../local-feed.
 #
 # A second, independent job builds the generated TypeScript client (clients/typescript/) that
 # giftlist-web installs from ../local-feed as a tarball — this repo owns the .proto files and
@@ -42,6 +45,12 @@ jobs:
           repository: goodsell-engineering/giftlist-giftlists
           path: giftlist-giftlists
 
+      - name: Checkout giftlist-reservations (sibling, for Reservations.Contracts)
+        uses: actions/checkout@v4
+        with:
+          repository: goodsell-engineering/giftlist-reservations
+          path: giftlist-reservations
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
@@ -57,7 +66,8 @@ jobs:
             giftlist-buildingblocks/src/BuildingBlocks.Infrastructure/BuildingBlocks.Infrastructure.csproj \
             giftlist-buildingblocks/src/BuildingBlocks.Testing/BuildingBlocks.Testing.csproj \
             giftlist-identity/src/Identity.Contracts/Identity.Contracts.csproj \
-            giftlist-giftlists/src/GiftLists.Contracts/GiftLists.Contracts.csproj; do
+            giftlist-giftlists/src/GiftLists.Contracts/GiftLists.Contracts.csproj \
+            giftlist-reservations/src/Reservations.Contracts/Reservations.Contracts.csproj; do
             id=$(dotnet msbuild "$proj" -getProperty:PackageId -nologo)
             ver=$(dotnet msbuild "$proj" -getProperty:Version -nologo)
             dotnet pack "$proj" -c Release -o "$FEED" --nologo

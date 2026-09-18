@@ -4,8 +4,8 @@ using Rebus.Handlers;
 namespace Gateway.IntegrationTests.Support;
 
 /// <summary>
-/// GL-73: counts how many times each GiftLists integration event type has actually been handled
-/// by the real Gateway consumer — registered as an <em>additional</em> Rebus handler alongside
+/// GL-73: counts how many times each upstream integration event type (GiftLists', and since
+/// GL-38 Reservations' <c>GiftReservedV1</c>) has actually been handled by the real Gateway consumer — registered as an <em>additional</em> Rebus handler alongside
 /// the production ones via <see cref="GiftListsEventProbeHandler{TEvent}"/> (Rebus supports and
 /// runs every <see cref="IHandleMessages{TMessage}"/> registered for a message type, and only
 /// acks once all of them have completed), so a count here can only have advanced as part of the

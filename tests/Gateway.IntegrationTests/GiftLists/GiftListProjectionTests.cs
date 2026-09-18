@@ -12,7 +12,7 @@ namespace Gateway.IntegrationTests.GiftLists;
 
 /// <summary>
 /// GL-23: the Gateway's own read model, built entirely off GiftLists' integration events on the
-/// real broker (a <see cref="GiftListsEventPublisher"/> stands in for GiftLists, CONVENTIONS.md
+/// real broker (a <see cref="UpstreamEventPublisher"/> stands in for GiftLists, CONVENTIONS.md
 /// "Testing"), and served through the real <c>/graphql</c> endpoint (<see cref="GraphQlClient"/>).
 ///
 /// Covers, at minimum (GL-23 review, Batch 12):

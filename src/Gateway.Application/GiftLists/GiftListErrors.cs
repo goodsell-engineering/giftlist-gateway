@@ -30,6 +30,17 @@ public static class GiftListErrors
     public static readonly Error Forbidden = new(
         "gateway.forbidden", "You do not own this gift list.", ErrorKind.Forbidden);
 
+    /// <summary>
+    /// "Log in again" (401), not "you may not do this" (403): the caller presented no credential
+    /// at all — no JWT subject and no share token. GL-38 moved this here from
+    /// <c>Gateway.Infrastructure.Platform.Security.HttpContextExtensions</c>, which raises it at
+    /// the transport when a JWT is missing or unparseable, so that <c>ViewGiftListInteractor</c>'s
+    /// <c>Anonymous</c> branch and that transport check share the one code rather than each
+    /// minting their own for the same semantic (CONVENTIONS.md "Errors").
+    /// </summary>
+    public static readonly Error Unauthenticated = new(
+        "gateway.unauthenticated", "A valid access token is required.", ErrorKind.Unauthenticated);
+
     /// <summary>Shared across every request field that is a required id and arrived as <see cref="Guid.Empty"/> — the same semantic regardless of which field or which use case caught it.</summary>
     public static readonly Error InvalidId = new(
         "gateway.invalid_id", "A required identifier was missing or invalid.", ErrorKind.Validation);

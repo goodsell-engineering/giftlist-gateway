@@ -59,14 +59,18 @@ app.UseAuthorization();
 // per endpoint, since Phase 1 has no non-grpc-web caller of this Gateway.
 app.UseGrpcWeb(new GrpcWebOptions { DefaultEnabled = true });
 app.MapGatewayGrpcServices();
+// GL-38: the share-token-scoped subscription rides a WebSocket (ARCHITECTURE.md "Realtime
+// updates"); HotChocolate's endpoint upgrades the connection itself, but only if ASP.NET Core's
+// WebSocket middleware is in the pipeline ahead of it.
+app.UseWebSockets();
 app.MapGatewayGraphQlEndpoints();
 
-// GL-23: the ownerId index the read model's queries rely on, and the subscriptions that let
-// GiftLists' integration events actually reach this process — both correctness requirements,
-// applied once at startup rather than left implicit (mirrors GiftLists.Host's own
+// GL-23/GL-38: the indexes the read models' queries rely on, and the subscriptions that let
+// GiftLists' and Reservations' integration events actually reach this process — both correctness
+// requirements, applied once at startup rather than left implicit (mirrors GiftLists.Host's own
 // EnsureIndexesAsync call).
 await GatewayInfrastructureServiceCollectionExtensions.EnsureIndexesAsync(app.Services, CancellationToken.None);
-await GatewayInfrastructureServiceCollectionExtensions.SubscribeToGiftListsEventsAsync(app.Services, CancellationToken.None);
+await GatewayInfrastructureServiceCollectionExtensions.SubscribeToUpstreamEventsAsync(app.Services, CancellationToken.None);
 
 // Liveness: only "is the process up and answering HTTP". Deliberately checks nothing
 // external — a RabbitMQ/Mongo blip must not make Docker kill an otherwise-healthy container
