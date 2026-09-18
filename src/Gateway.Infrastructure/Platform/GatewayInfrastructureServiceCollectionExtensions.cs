@@ -1,18 +1,22 @@
 using System.Security.Cryptography;
 using Gateway.Application.Common;
 using Gateway.Application.GiftLists;
-using Gateway.Application.GiftLists.GetGiftList;
 using Gateway.Application.GiftLists.GetMyGiftLists;
-using Gateway.Application.GiftLists.GetSharedGiftList;
 using Gateway.Application.GiftLists.RecordGiftItemAdded;
 using Gateway.Application.GiftLists.RecordGiftItemRemoved;
 using Gateway.Application.GiftLists.RecordGiftListCreated;
 using Gateway.Application.GiftLists.RecordGiftListDeleted;
 using Gateway.Application.GiftLists.RecordGiftListRenamed;
+using Gateway.Application.GiftLists.ViewGiftList;
+using Gateway.Application.Reservations;
+using Gateway.Application.Reservations.RecordGiftReserved;
 using Gateway.Infrastructure.GiftLists.GraphQL;
 using Gateway.Infrastructure.GiftLists.Messaging;
 using Gateway.Infrastructure.GiftLists.Persistence;
 using Gateway.Infrastructure.Platform.Security;
+using Gateway.Infrastructure.Reservations.GraphQL;
+using Gateway.Infrastructure.Reservations.Messaging;
+using Gateway.Infrastructure.Reservations.Persistence;
 using GiftLists.Contracts.GiftLists.Events;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Configuration;
@@ -21,6 +25,7 @@ using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
 using Rebus.Bus;
 using Rebus.Config;
+using Reservations.Contracts.Reservations.Events;
 
 namespace Gateway.Infrastructure.Platform;
 
@@ -37,30 +42,34 @@ public static class GatewayInfrastructureServiceCollectionExtensions
     {
         services.AddGrpc();
         AddGiftListProjection(services);
+        AddReservationProjection(services);
+        AddGraphQl(services);
         AddAuthentication(services, configuration);
         return services;
     }
 
     /// <summary>
-    /// The <c>ownerId</c> index <c>myGiftLists</c> relies on (ARCHITECTURE.md "Data model") — a correctness
-    /// requirement, applied once at startup rather than left to be inferred from application
-    /// code, mirroring <c>GiftListsInfrastructureServiceCollectionExtensions.EnsureIndexesAsync</c>.
+    /// The indexes the read models' queries rely on (ARCHITECTURE.md "Data model") — a
+    /// correctness requirement, applied once at startup rather than left to be inferred from
+    /// application code, mirroring <c>GiftListsInfrastructureServiceCollectionExtensions.EnsureIndexesAsync</c>.
     /// </summary>
-    public static Task EnsureIndexesAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken)
+    public static async Task EnsureIndexesAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken)
     {
         var database = serviceProvider.GetRequiredService<IMongoDatabase>();
-        return GiftListProjectionRepository.EnsureIndexesAsync(database, cancellationToken);
+        await GiftListProjectionRepository.EnsureIndexesAsync(database, cancellationToken);
+        await ReservationProjectionRepository.EnsureIndexesAsync(database, cancellationToken);
     }
 
     /// <summary>
-    /// Subscribes to every GiftLists integration event this read model is built from (GL-23).
-    /// Called once from <c>Program.cs</c>, after the host is built — mirrors
-    /// <see cref="EnsureIndexesAsync"/>'s own placement/rationale. Public, and named after the
-    /// wire events only in its doc comment rather than its signature, for the same reason
-    /// <c>GatewayMessageRouting</c> exists at all: Host may not reference another service's
-    /// Contracts directly (CONVENTIONS.md "Project reference graph"), only call through to Infrastructure, which may.
+    /// Subscribes to every upstream integration event this service's read models are built from —
+    /// GiftLists' five (GL-23) and Reservations' one (GL-38). Called once from <c>Program.cs</c>,
+    /// after the host is built — mirrors <see cref="EnsureIndexesAsync"/>'s own placement/rationale.
+    /// Public, and named after the wire events only in its doc comment rather than its signature,
+    /// for the same reason <c>GatewayMessageRouting</c> exists at all: Host may not reference
+    /// another service's Contracts directly (CONVENTIONS.md "Project reference graph"), only call
+    /// through to Infrastructure, which may.
     /// </summary>
-    public static async Task SubscribeToGiftListsEventsAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken)
+    public static async Task SubscribeToUpstreamEventsAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken)
     {
         var bus = serviceProvider.GetRequiredService<IBus>();
         await bus.Subscribe<GiftListCreatedV1>();
@@ -68,6 +77,7 @@ public static class GatewayInfrastructureServiceCollectionExtensions
         await bus.Subscribe<GiftListDeletedV1>();
         await bus.Subscribe<GiftItemAddedV1>();
         await bus.Subscribe<GiftItemRemovedV1>();
+        await bus.Subscribe<GiftReservedV1>();
     }
 
     private static void AddGiftListProjection(IServiceCollection services)
@@ -92,24 +102,56 @@ public static class GatewayInfrastructureServiceCollectionExtensions
         services.AddScoped<IValidator<GetMyGiftListsRequest>, GetMyGiftListsValidator>();
         services.AddScoped<IInteractor<GetMyGiftListsRequest, GetMyGiftListsResponse>, GetMyGiftListsInteractor>();
 
-        services.AddScoped<IValidator<GetGiftListRequest>, GetGiftListValidator>();
-        services.AddScoped<IInteractor<GetGiftListRequest, GetGiftListResponse>, GetGiftListInteractor>();
-
-        services.AddScoped<IValidator<GetSharedGiftListRequest>, GetSharedGiftListValidator>();
-        services.AddScoped<IInteractor<GetSharedGiftListRequest, GetSharedGiftListResponse>, GetSharedGiftListInteractor>();
-
-        // One open-generic decorator pair, applied to every IInteractor<,> registered above —
-        // Validation, then Logging, in that order in every service (CONVENTIONS.md "Use cases").
-        services.Decorate(typeof(IInteractor<,>), typeof(Validating<,>));
-        services.Decorate(typeof(IInteractor<,>), typeof(Logging<,>));
+        // GL-38: one interactor behind giftList(id), sharedGiftList(token) and the subscription —
+        // the only type that holds IReservationProjectionRepository (ARCHITECTURE.md "Defence in
+        // depth on the owner-facing path"; pinned by ReservationProjectionPortIsolationTests).
+        services.AddScoped<IValidator<ViewGiftListRequest>, ViewGiftListValidator>();
+        services.AddScoped<IInteractor<ViewGiftListRequest, ViewGiftListResponse>, ViewGiftListInteractor>();
 
         services.AddRebusHandler<GiftListCreatedV1Handler>();
         services.AddRebusHandler<GiftListRenamedV1Handler>();
         services.AddRebusHandler<GiftListDeletedV1Handler>();
         services.AddRebusHandler<GiftItemAddedV1Handler>();
         services.AddRebusHandler<GiftItemRemovedV1Handler>();
+    }
 
-        services.AddGraphQLServer().AddQueryType<GiftListQueries>();
+    /// <summary>
+    /// GL-38: the reservation projection — a second collection, its own two ports (read for
+    /// ViewGiftList, write for the GiftReservedV1 path — one class behind both, see
+    /// <see cref="ReservationProjectionRepository"/>), and the notifier that turns a projected
+    /// event into a push on the share-token-scoped subscription (ARCHITECTURE.md "Realtime
+    /// updates").
+    /// </summary>
+    private static void AddReservationProjection(IServiceCollection services)
+    {
+        services.AddScoped<IReservationProjectionRepository, ReservationProjectionRepository>();
+        services.AddScoped<IReservationProjectionWriter, ReservationProjectionRepository>();
+        services.AddScoped<IReservationChangeNotifier, ReservationChangeNotifier>();
+
+        services.AddScoped<IValidator<RecordGiftReservedRequest>, RecordGiftReservedValidator>();
+        services.AddScoped<IInteractor<RecordGiftReservedRequest, RecordGiftReservedResponse>, RecordGiftReservedInteractor>();
+
+        services.AddRebusHandler<GiftReservedV1Handler>();
+    }
+
+    /// <summary>
+    /// The decorator pair and the GraphQL server, after every interactor across every domain has
+    /// been registered — Scrutor's Decorate wraps what is already in the collection, so this must
+    /// run last. One open-generic decorator pair, applied to every IInteractor&lt;,&gt; — Validation,
+    /// then Logging, in that order in every service (CONVENTIONS.md "Use cases").
+    /// </summary>
+    private static void AddGraphQl(IServiceCollection services)
+    {
+        services.Decorate(typeof(IInteractor<,>), typeof(Validating<,>));
+        services.Decorate(typeof(IInteractor<,>), typeof(Logging<,>));
+
+        services
+            .AddGraphQLServer()
+            .AddQueryType<GiftListQueries>()
+            // GL-38: the one subscription, share-token scoped; in-memory topics, so one Gateway
+            // instance (ARCHITECTURE.md "Realtime updates").
+            .AddSubscriptionType<GiftListSubscriptions>()
+            .AddInMemorySubscriptions();
     }
 
     /// <summary>

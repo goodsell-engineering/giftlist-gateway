@@ -13,6 +13,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using Rebus.Config;
+using Reservations.Contracts.Reservations.Events;
 
 namespace Gateway.IntegrationTests.Fixtures;
 
@@ -21,8 +22,8 @@ namespace Gateway.IntegrationTests.Fixtures;
 /// running the exact <c>Program.cs</c> pipeline (grpc-web middleware, GraphQL, CORS, auth,
 /// AuthGrpcService) against the containers from <see cref="InfrastructureFixture"/> — plus a
 /// "responder" Rebus host standing in for Identity (<see cref="FakeIdentityResponder"/>) and a
-/// "publisher" one standing in for GiftLists (<see cref="GiftListsEventPublisher"/>), the only
-/// other services this one ever talks to in production. Tests enter through the real grpc-web/
+/// "publisher" one standing in for GiftLists and Reservations (<see cref="UpstreamEventPublisher"/>),
+/// the only other services this one ever talks to in production. Tests enter through the real grpc-web/
 /// GraphQL endpoints (CONVENTIONS.md "Testing"'s "entered at its real entry point"), never by calling
 /// AuthGrpcService/an interactor directly.
 /// </summary>
@@ -30,6 +31,9 @@ public sealed class GatewayFixture : IAsyncLifetime
 {
     /// <summary>Mirrors the internal <c>GiftListProjectionRepository.CollectionName</c> — not accessible from here, kept in sync by hand.</summary>
     public const string GiftListProjectionsCollectionName = "giftListProjections";
+
+    /// <summary>Mirrors the internal <c>ReservationProjectionRepository.CollectionName</c> (GL-38) — same arrangement.</summary>
+    public const string ReservationProjectionsCollectionName = "reservationProjections";
 
     private const string IdentityQueueName = "identity";
     private const string DatabaseName = "gateway";
@@ -40,7 +44,7 @@ public sealed class GatewayFixture : IAsyncLifetime
     private readonly InfrastructureFixture _infrastructure = new();
     private WebApplicationFactory<Program> _gatewayFactory = null!;
     private IHost _identityResponderHost = null!;
-    private GiftListsEventPublisher _giftListsEventPublisher = null!;
+    private UpstreamEventPublisher _upstreamEventPublisher = null!;
     private GiftListsCommandListener _giftListsCommandListener = null!;
 
     public AuthService.AuthServiceClient AuthClient { get; private set; } = null!;
@@ -55,8 +59,11 @@ public sealed class GatewayFixture : IAsyncLifetime
     /// <summary>GL-73: see <see cref="GiftListsEventProbe"/>'s own doc comment.</summary>
     public GiftListsEventProbe EventProbe { get; private set; } = null!;
 
-    /// <summary>The GiftLists integration events this fixture can publish onto the real broker — see <see cref="GiftListsEventPublisher"/>'s own doc comment.</summary>
-    public Rebus.Bus.IBus GiftListsBus => _giftListsEventPublisher.Bus;
+    /// <summary>The GiftLists integration events this fixture can publish onto the real broker — see <see cref="UpstreamEventPublisher"/>'s own doc comment.</summary>
+    public Rebus.Bus.IBus GiftListsBus => _upstreamEventPublisher.Bus;
+
+    /// <summary>GL-38: Reservations' <c>GiftReservedV1</c>, from the same publish-only host — see <see cref="UpstreamEventPublisher"/>'s own doc comment for why one host serves both.</summary>
+    public Rebus.Bus.IBus ReservationsBus => _upstreamEventPublisher.Bus;
 
     /// <summary>Every GiftLists command sent by <c>GiftListsGrpcService</c> (GL-71), recorded by <see cref="GiftListsCommandListener"/> standing in for GiftLists on the real broker.</summary>
     public GiftListsCommandSink GiftListsCommands => _giftListsCommandListener.Sink;
@@ -76,7 +83,7 @@ public sealed class GatewayFixture : IAsyncLifetime
         _identityResponderHost = identityBuilder.Build();
         await _identityResponderHost.StartAsync();
 
-        _giftListsEventPublisher = await GiftListsEventPublisher.StartAsync(_infrastructure.RabbitMqConnectionString);
+        _upstreamEventPublisher = await UpstreamEventPublisher.StartAsync(_infrastructure.RabbitMqConnectionString);
         _giftListsCommandListener = await GiftListsCommandListener.StartAsync(_infrastructure.RabbitMqConnectionString);
 
         // Program.cs reads configuration synchronously while building — before
@@ -113,6 +120,7 @@ public sealed class GatewayFixture : IAsyncLifetime
                 services.AddRebusHandler<GiftListsEventProbeHandler<GiftListDeletedV1>>();
                 services.AddRebusHandler<GiftListsEventProbeHandler<GiftItemAddedV1>>();
                 services.AddRebusHandler<GiftListsEventProbeHandler<GiftItemRemovedV1>>();
+                services.AddRebusHandler<GiftListsEventProbeHandler<GiftReservedV1>>();
             });
         });
 
@@ -138,7 +146,7 @@ public sealed class GatewayFixture : IAsyncLifetime
         _gatewayFactory.Dispose();
         await _identityResponderHost.StopAsync();
         _identityResponderHost.Dispose();
-        await _giftListsEventPublisher.DisposeAsync();
+        await _upstreamEventPublisher.DisposeAsync();
         await _giftListsCommandListener.DisposeAsync();
         await _infrastructure.DisposeAsync();
 
@@ -153,10 +161,11 @@ public sealed class GatewayFixture : IAsyncLifetime
     /// <summary>
     /// CONVENTIONS.md "Testing": isolate by dropping the database between tests, never by restarting a
     /// container. Mirrors <c>GiftLists.IntegrationTests.Fixtures.GiftListsFixture.ResetAsync</c>;
-    /// unlike that one there are no unique indexes to re-apply — <c>ownerId</c> and
-    /// <c>shareToken</c> are both non-unique, performance-only indexes here (neither is a
-    /// correctness requirement the way GiftLists' own unique <c>shareToken</c> index is), so a
-    /// test running before either exists would still pass, just via a collection scan.
+    /// unlike that one there are no unique indexes to re-apply — <c>ownerId</c>, <c>shareToken</c>
+    /// and (GL-38) the reservation projection's <c>listId</c> are all non-unique, performance-only
+    /// indexes here (none is a correctness requirement the way GiftLists' own unique
+    /// <c>shareToken</c> index is; the reservation pair's uniqueness is its <c>_id</c>), so a test
+    /// running before any exists would still pass, just via a collection scan.
     /// </summary>
     public Task ResetAsync() => Database.Client.DropDatabaseAsync(DatabaseName);
 
@@ -170,6 +179,14 @@ public sealed class GatewayFixture : IAsyncLifetime
     /// needs a scope held open for the whole suite.
     /// </summary>
     public IServiceScope CreateGatewayScope() => _gatewayFactory.Services.CreateScope();
+
+    /// <summary>
+    /// GL-38: a WebSocket client into the in-memory host, for the subscription tests — the real
+    /// <c>/graphql</c> endpoint over the real <c>graphql-transport-ws</c> protocol
+    /// (<see cref="GraphQlSubscriptionClient"/>), not a resolver called directly.
+    /// </summary>
+    public Task<GraphQlSubscriptionClient> ConnectSubscriptionClientAsync(CancellationToken cancellationToken) =>
+        GraphQlSubscriptionClient.ConnectAsync(_gatewayFactory.Server, cancellationToken);
 
     /// <summary>
     /// .NET's environment-variable configuration provider maps <c>Section:Key</c> to

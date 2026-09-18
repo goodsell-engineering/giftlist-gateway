@@ -1,8 +1,7 @@
 using Gateway.Application.Common;
 using Gateway.Application.GiftLists;
-using Gateway.Application.GiftLists.GetGiftList;
 using Gateway.Application.GiftLists.GetMyGiftLists;
-using Gateway.Application.GiftLists.GetSharedGiftList;
+using Gateway.Application.GiftLists.ViewGiftList;
 using Gateway.Infrastructure.Platform.Security;
 using Gateway.Infrastructure.Platform.Transport;
 using HotChocolate;
@@ -15,9 +14,14 @@ namespace Gateway.Infrastructure.GiftLists.GraphQL;
 /// both owner-scoped by JWT (ARCHITECTURE.md "Auth & sharing"), plus <c>sharedGiftList(token)</c>
 /// (GL-32), which is not authenticated at all. Thin by design, the same way a Rebus handler or
 /// <c>AuthGrpcService</c> is thin: read the caller's id off the token, call the one input port,
-/// translate a failure into a <see cref="GraphQLException"/>. There is no business logic here —
-/// ownership enforcement itself lives in <c>GetGiftListInteractor</c>, not in this resolver, so it
-/// is exercised the same way whichever surface calls it.
+/// translate a failure into a <see cref="GraphQLException"/>. There is no business logic here.
+/// <c>giftList(id)</c> and <c>sharedGiftList(token)</c> are the same use case seen by two
+/// viewers: each hands <c>ViewGiftList</c> a <see cref="ViewerContext"/> and maps the one case of
+/// <see cref="GiftListView"/> its schema type is (GL-38). Ownership enforcement and the
+/// reservation-visibility rule both live in <c>ViewGiftListInteractor</c>, not here, so they are
+/// exercised the same way whichever surface calls it — including the subscription in
+/// <see cref="GiftListSubscriptions"/> (ARCHITECTURE.md "Defence in depth on the owner-facing
+/// path": "one rule, one implementation").
 ///
 /// Reads the caller's principal off a plain <see cref="HttpContext"/> resolver parameter —
 /// HotChocolate.AspNetCore's own parameter binding recognises that type specifically and hands it
@@ -63,21 +67,23 @@ public sealed class GiftListQueries
     /// One list by id, only if the caller owns it — <c>gateway.forbidden</c>
     /// (<c>ErrorKind.Forbidden</c>, GraphQL <c>extensions.code</c> <c>FORBIDDEN</c>) otherwise,
     /// never the list's data (GL-23 review, Batch 12: this is the security boundary the whole
-    /// read model exists behind).
+    /// read model exists behind). Returns <see cref="GiftListProjection"/>, a type with no
+    /// reservation field: the owner viewer's view is decided by <c>ViewGiftListInteractor</c>
+    /// without the reservation projection ever being read (GL-38).
     /// </summary>
     [GraphQLName("giftList")]
     public async Task<GiftListProjection> GetGiftList(
         Guid id,
         HttpContext httpContext,
-        [Service] IInteractor<GetGiftListRequest, GetGiftListResponse> getGiftList,
+        [Service] IInteractor<ViewGiftListRequest, ViewGiftListResponse> viewGiftList,
         CancellationToken cancellationToken)
     {
         var requesterId = httpContext.RequireUserId();
-        var request = new GetGiftListRequest(id, requesterId);
-        var result = await getGiftList.Handle(request, cancellationToken);
+        var request = new ViewGiftListRequest(new ViewerContext.Owner(id, requesterId));
+        var result = await viewGiftList.Handle(request, cancellationToken);
 
         return result.Match(
-            onSuccess: response => response.GiftList,
+            onSuccess: response => response.View.ForOwnerOrThrow(),
             onFailure: error => throw error.ToGraphQlException());
     }
 
@@ -85,9 +91,11 @@ public sealed class GiftListQueries
     /// One list by its share token, for a caller who is not logged in — the token is the whole
     /// credential (ARCHITECTURE.md "Auth &amp; sharing"). Returns
     /// <see cref="SharedGiftListView"/>, never <c>GiftListProjection</c>: the anonymous view has
-    /// no <c>ownerId</c> or <c>shareToken</c> field in the schema at all, which is a property of
-    /// the type rather than of this method (see <see cref="SharedGiftListView"/> for why it is
-    /// omitted by construction rather than hidden here).
+    /// no <c>ownerId</c> or <c>shareToken</c> field in the schema at all, and its items carry
+    /// <c>reserved: boolean</c> and nothing else about a reservation — both properties of the
+    /// type rather than of this method (see <see cref="SharedGiftListView"/> and
+    /// <see cref="SharedGiftItemView"/> for why they are omitted by construction rather than
+    /// hidden here).
     ///
     /// An expired list still resolves, read-only — decided 2026-09-16, recorded in
     /// ARCHITECTURE.md "Auth &amp; sharing"; <c>expiresAt</c> is on the response so the SPA can
@@ -96,14 +104,14 @@ public sealed class GiftListQueries
     [GraphQLName("sharedGiftList")]
     public async Task<SharedGiftListView> GetSharedGiftList(
         string token,
-        [Service] IInteractor<GetSharedGiftListRequest, GetSharedGiftListResponse> getSharedGiftList,
+        [Service] IInteractor<ViewGiftListRequest, ViewGiftListResponse> viewGiftList,
         CancellationToken cancellationToken)
     {
-        var request = new GetSharedGiftListRequest(token);
-        var result = await getSharedGiftList.Handle(request, cancellationToken);
+        var request = new ViewGiftListRequest(new ViewerContext.GuestWithToken(token));
+        var result = await viewGiftList.Handle(request, cancellationToken);
 
         return result.Match(
-            onSuccess: response => response.GiftList,
+            onSuccess: response => response.View.ForGuestOrThrow(),
             onFailure: error => throw error.ToGraphQlException());
     }
 }

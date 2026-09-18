@@ -10,7 +10,7 @@ namespace Gateway.IntegrationTests.GiftLists;
 /// <summary>
 /// GL-32: the Gateway's one unauthenticated GraphQL surface, <c>sharedGiftList(token)</c>, driven
 /// end to end — GiftLists' real integration events on the real broker build the projection
-/// (<see cref="GiftListsEventPublisher"/>), and every query below enters through the real
+/// (<see cref="UpstreamEventPublisher"/>), and every query below enters through the real
 /// <c>/graphql</c> endpoint with <b>no access token at all</b> (CONVENTIONS.md "Testing").
 ///
 /// Separate from <c>GiftListProjectionTests</c>, which is about how the projection is built out of

@@ -1,4 +1,4 @@
-namespace Gateway.Application.GiftLists.GetSharedGiftList;
+namespace Gateway.Application.GiftLists.ViewGiftList;
 
 /// <summary>
 /// What an anonymous guest holding a share link may see of a gift list, and the whole of it.
@@ -15,10 +15,8 @@ namespace Gateway.Application.GiftLists.GetSharedGiftList;
 /// <para>
 /// <b>Why <c>ownerId</c> specifically.</b> To an unauthenticated caller an owner GUID is a stable
 /// cross-list correlation handle: two share links carrying the same GUID identify one person
-/// across lists nobody said were related. There is no reservation data in this projection at all,
-/// so this is not a reservation-privacy violation — it is the class of leak ARCHITECTURE.md
-/// "Nobody can see *who* reserved" forbids, reached by a different road, and this is the first
-/// unauthenticated surface in the build.
+/// across lists nobody said were related. That is the class of leak ARCHITECTURE.md "Nobody can
+/// see *who* reserved" forbids, reached by a different road (GL-32).
 /// </para>
 /// <para>
 /// <b>Why the token is not echoed back.</b> It is a bearer capability. A response that repeats it
@@ -30,15 +28,15 @@ namespace Gateway.Application.GiftLists.GetSharedGiftList;
 /// on GL-32 and in ARCHITECTURE.md "Auth &amp; sharing": an expired list stays visible through the
 /// share link, read-only. Expiry gates <em>reserving</em>, not <em>viewing</em> — which is also
 /// the stated reason a Mongo TTL index is rejected for expiry ("we want an expired list to become
-/// read-only but still visible"). So this use case applies no expiry predicate, and the client
+/// read-only but still visible"). So the interactor applies no expiry predicate, and the client
 /// (GL-33/GL-42) renders the expired banner and disables reserve from this field. Do not re-open
 /// this by adding a filter.
 /// </para>
 /// <para>
-/// <b>Why the items reuse <see cref="GiftItemProjection"/>.</b> That type already carries nothing
-/// an anonymous caller may not see — no owner, no token, and by construction no reservation state
-/// (see its own doc comment) — so a parallel anonymous item type would duplicate a type without
-/// removing a field from it.
+/// <b>Why the items are <see cref="SharedGiftItemView"/> (GL-38).</b> Until reservation data
+/// existed in this service the items reused <see cref="GiftItemProjection"/>; now the guest's
+/// item carries <c>reserved</c> and the owner's must not, so they are two types — see
+/// <see cref="SharedGiftItemView"/> for the whole of what that field may ever be.
 /// </para>
 /// <para>
 /// <c>ListId</c> is included because GL-42's reserve action addresses the list and item by id; it
@@ -51,4 +49,4 @@ public sealed record SharedGiftListView(
     Guid ListId,
     string Name,
     DateTimeOffset ExpiresAt,
-    IReadOnlyList<GiftItemProjection> Items);
+    IReadOnlyList<SharedGiftItemView> Items);

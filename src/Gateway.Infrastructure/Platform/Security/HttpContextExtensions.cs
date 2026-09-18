@@ -1,10 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
-using BuildingBlocks.Results;
+using Gateway.Application.GiftLists;
 using Gateway.Infrastructure.Platform.Transport;
 using Microsoft.AspNetCore.Http;
-// Aliased — this project also carries HotChocolate's implicit global `using HotChocolate;`, and
-// HotChocolate.Error collides with BuildingBlocks.Results.Error (CS0104).
-using Error = BuildingBlocks.Results.Error;
 
 namespace Gateway.Infrastructure.Platform.Security;
 
@@ -19,9 +16,6 @@ namespace Gateway.Infrastructure.Platform.Security;
 /// </summary>
 internal static class HttpContextExtensions
 {
-    private static readonly Error Unauthenticated = new(
-        "gateway.unauthenticated", "A valid access token is required.", ErrorKind.Unauthenticated);
-
     /// <summary>
     /// The caller's own id, from the JWT's <c>sub</c> claim on <see cref="HttpContext.User"/>.
     /// Throws a <see cref="GraphQLException"/> mapped from <see cref="ErrorKind.Unauthenticated"/>
@@ -38,7 +32,9 @@ internal static class HttpContextExtensions
         var subject = principal.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
         if (principal.Identity?.IsAuthenticated != true || !Guid.TryParse(subject, out var userId))
         {
-            throw Unauthenticated.ToGraphQlException();
+            // GL-38: the same gateway.unauthenticated ViewGiftListInteractor gives an Anonymous
+            // viewer — one code for one semantic (CONVENTIONS.md "Errors").
+            throw GiftListErrors.Unauthenticated.ToGraphQlException();
         }
 
         return userId;

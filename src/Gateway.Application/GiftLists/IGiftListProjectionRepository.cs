@@ -8,7 +8,9 @@ namespace Gateway.Application.GiftLists;
 
 /// <summary>
 /// Port lives beside the domain it serves (CONVENTIONS.md "Folder structure"), not in a shared Abstractions
-/// bucket. One repository over the one projection this service has.
+/// bucket. One repository over the gift-list projection; the reservation projection (GL-38) has
+/// its own, deliberately narrower pair of ports — see
+/// <c>Gateway.Application.Reservations.IReservationProjectionRepository</c>.
 ///
 /// The five <c>Apply*</c> methods are the whole of GL-23's redelivery/reordering story
 /// (Batch 12 review comments): each is expected to be an <em>idempotent, last-write-wins
@@ -55,9 +57,10 @@ public interface IGiftListProjectionRepository
     /// GL-31: the read-model half of the share link — looks a projection up by its
     /// <c>shareToken</c> rather than its <c>ListId</c>/<c>OwnerId</c>. Same null-when-absent
     /// convention as <see cref="FindByIdAsync"/>, including for a stub row
-    /// (<c>HasCreated == false</c>) or a soft-deleted one. Deliberately stops here: no GraphQL
-    /// query, resolver or interactor calls this yet — GL-32 owns the privacy decision about what
-    /// an unauthenticated caller may see through it, and adds the surface that calls it.
+    /// (<c>HasCreated == false</c>) or a soft-deleted one. Called only from
+    /// <c>ViewGiftListInteractor</c>'s guest branch — the one place the privacy decision about
+    /// what an unauthenticated caller may see is made (ARCHITECTURE.md "Defence in depth on the
+    /// owner-facing path").
     /// </summary>
     Task<GiftListProjection?> FindByShareTokenAsync(string shareToken, CancellationToken cancellationToken);
 
