@@ -1,6 +1,6 @@
 {
   "name": "@giftlist/gateway-client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Generated TypeScript grpc-web client for the GiftList Gateway. Built from this repo's protos/, which the Gateway owns.",
   "license": "UNLICENSED",
   "type": "module",

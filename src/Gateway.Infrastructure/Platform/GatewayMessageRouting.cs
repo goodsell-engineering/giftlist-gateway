@@ -2,6 +2,7 @@ using GiftLists.Contracts.GiftLists;
 using Identity.Contracts.Users;
 using Rebus.Config;
 using Rebus.Routing.TypeBased;
+using Reservations.Contracts.Reservations;
 
 namespace Gateway.Infrastructure.Platform;
 
@@ -30,6 +31,14 @@ public static class GatewayMessageRouting
     /// </summary>
     public const string GiftListsQueueName = "giftlist";
 
+    /// <summary>
+    /// Reservations' Rebus queue name — singular, per ARCHITECTURE.md "Data model" (the service
+    /// directory is plural, <c>reservations/</c>, but its queue and database are not — matches
+    /// <c>Reservations.Host</c>'s own <c>AddBuildingBlocksRebus(..., "reservation")</c> call
+    /// exactly).
+    /// </summary>
+    public const string ReservationsQueueName = "reservation";
+
     public static RebusConfigurer Configure(RebusConfigurer configurer, IServiceProvider serviceProvider) =>
         configurer.Routing(r => r.TypeBased()
             .Map<SignUp>(IdentityQueueName)
@@ -38,5 +47,7 @@ public static class GatewayMessageRouting
             .Map<RenameGiftList>(GiftListsQueueName)
             .Map<DeleteGiftList>(GiftListsQueueName)
             .Map<AddGiftItem>(GiftListsQueueName)
-            .Map<RemoveGiftItem>(GiftListsQueueName));
+            .Map<RemoveGiftItem>(GiftListsQueueName)
+            // GL-37: the reservation grpc-web surface's one request/reply command.
+            .Map<ReserveGift>(ReservationsQueueName));
 }

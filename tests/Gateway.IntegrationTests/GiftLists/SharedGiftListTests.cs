@@ -117,7 +117,7 @@ public sealed class SharedGiftListTests(GatewayFixture gateway) : IAsyncLifetime
     }
 
     /// <summary>
-    /// The boundary shape check (<c>GetSharedGiftListValidator</c>), which is what stops an
+    /// The boundary shape check (<c>ViewGiftListValidator</c>, via <c>ShareTokenFormat</c>), which is what stops an
     /// unauthenticated caller driving arbitrary-length, arbitrary-content strings at Mongo. Note
     /// the answer differs from <see cref="SharedGiftList_ShouldReturnNotFound_WhenNoListCarriesTheToken"/>
     /// above, deliberately: "that is not a share token" and "no list has that share token" are

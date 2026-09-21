@@ -14,10 +14,12 @@
  * under node_modules — would fail to resolve it. A bundler papers over that, so the defect shows
  * up only in giftlist-web's test run and not in its dev server.
  *
- * Name collisions between the two .proto files would surface here as a compile error in this
+ * Name collisions between the .proto files would surface here as a compile error in this
  * package rather than as ambiguity in giftlist-web. Today there are none: each file has its own
- * proto package (giftlist.identity.v1, giftlist.giftlists.v1) and protoc-gen-es derives the
- * TypeScript names from the message names, which do not overlap.
+ * proto package (giftlist.identity.v1, giftlist.giftlists.v1, giftlist.reservations.v1) and
+ * protoc-gen-es derives the TypeScript names from the message names, which do not overlap.
  */
 export * from "./gen/identity_pb.js";
 export * from "./gen/giftlists_pb.js";
+// GL-37: the guest reservation surface — ReserveGift(shareToken, itemId), consumed by GL-40.
+export * from "./gen/reservations_pb.js";

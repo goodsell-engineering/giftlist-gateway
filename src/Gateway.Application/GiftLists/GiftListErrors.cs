@@ -47,7 +47,8 @@ public static class GiftListErrors
 
     /// <summary>
     /// GL-32: the share token failed the shape check at the boundary
-    /// (<c>GetSharedGiftListValidator</c>) — it is not 21 base62 characters, so no gift list could
+    /// (<see cref="ShareTokenFormat"/>, via <c>ViewGiftListValidator</c> or, since GL-37,
+    /// <c>Gateway.Infrastructure.Reservations.Grpc.ReservationsGrpcService</c>) — it is not 21 base62 characters, so no gift list could
     /// ever carry it and nothing was looked up. A distinct semantic from <see cref="NotFound"/>,
     /// which means "well-formed, but no list has it": telling an anonymous caller the difference
     /// costs nothing (the token's shape is visible in every share URL) and stops a client with a

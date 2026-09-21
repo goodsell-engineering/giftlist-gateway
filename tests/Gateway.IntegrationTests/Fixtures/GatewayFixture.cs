@@ -1,5 +1,7 @@
 using BuildingBlocks.Messaging;
+using BuildingBlocks.Testing;
 using Gateway.Infrastructure.GiftLists.Grpc;
+using Gateway.Infrastructure.Reservations.Grpc;
 using Gateway.Infrastructure.Users.Grpc;
 using Gateway.IntegrationTests.Support;
 using GiftLists.Contracts.GiftLists.Events;
@@ -36,14 +38,29 @@ public sealed class GatewayFixture : IAsyncLifetime
     public const string ReservationProjectionsCollectionName = "reservationProjections";
 
     private const string IdentityQueueName = "identity";
+
+    /// <summary>Matches <see cref="Gateway.Infrastructure.Platform.GatewayMessageRouting.ReservationsQueueName"/> — kept as a local literal rather than a reference, the same way <see cref="IdentityQueueName"/> is, since Host may not reference another service's Contracts and this fixture stands in for that service on the real broker.</summary>
+    private const string ReservationsQueueName = "reservation";
+
     private const string DatabaseName = "gateway";
 
     /// <summary>Short enough that the reply-timeout test doesn't dominate the whole suite's runtime.</summary>
     public static readonly TimeSpan ReplyTimeout = TimeSpan.FromSeconds(2);
 
     private readonly InfrastructureFixture _infrastructure = new();
+
+    /// <summary>
+    /// GL-37: every log entry the real Gateway host emits, so a test can prove a release secret
+    /// never reaches a log line — the actual backstop this issue is about, not merely that a
+    /// redacting value object exists (BuildingBlocks.Testing 0.2.0's own doc comment). Registered
+    /// as the host's only provider (<c>ClearProviders</c> then <c>AddProvider</c>), same as that
+    /// type's own remarks recommend.
+    /// </summary>
+    private readonly LogCapture _logCapture = new();
+
     private WebApplicationFactory<Program> _gatewayFactory = null!;
     private IHost _identityResponderHost = null!;
+    private IHost _reservationsResponderHost = null!;
     private UpstreamEventPublisher _upstreamEventPublisher = null!;
     private GiftListsCommandListener _giftListsCommandListener = null!;
 
@@ -52,9 +69,15 @@ public sealed class GatewayFixture : IAsyncLifetime
     /// <summary>GL-71: the grpc-web client for the GiftLists command surface.</summary>
     public GiftListsService.GiftListsServiceClient GiftListsClient { get; private set; } = null!;
 
+    /// <summary>GL-37: the grpc-web client for the guest reservation surface.</summary>
+    public ReservationsService.ReservationsServiceClient ReservationsClient { get; private set; } = null!;
+
     public HttpClient GraphQlHttpClient { get; private set; } = null!;
 
     public IMongoDatabase Database { get; private set; } = null!;
+
+    /// <summary>GL-37: see <see cref="_logCapture"/>'s own doc comment.</summary>
+    public LogCapture Logs => _logCapture;
 
     /// <summary>GL-73: see <see cref="GiftListsEventProbe"/>'s own doc comment.</summary>
     public GiftListsEventProbe EventProbe { get; private set; } = null!;
@@ -83,6 +106,21 @@ public sealed class GatewayFixture : IAsyncLifetime
         _identityResponderHost = identityBuilder.Build();
         await _identityResponderHost.StartAsync();
 
+        // GL-37: stands in for Reservations on the real broker, same arrangement as the Identity
+        // responder above — its own input queue must be the literal "reservation" name
+        // (GatewayMessageRouting.ReservationsQueueName), not a throwaway one, since Rebus's
+        // type-based routing addresses ReserveGift there by queue name, not by subscription.
+        var reservationsBuilder = Host.CreateApplicationBuilder();
+        reservationsBuilder.Logging.ClearProviders();
+        reservationsBuilder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            [RebusConfigurationExtensions.ConnectionStringConfigKey] = _infrastructure.RabbitMqConnectionString,
+        });
+        reservationsBuilder.Services.AddBuildingBlocksRebus(reservationsBuilder.Configuration, ReservationsQueueName);
+        reservationsBuilder.Services.AddRebusHandler<FakeReservationsResponder>();
+        _reservationsResponderHost = reservationsBuilder.Build();
+        await _reservationsResponderHost.StartAsync();
+
         _upstreamEventPublisher = await UpstreamEventPublisher.StartAsync(_infrastructure.RabbitMqConnectionString);
         _giftListsCommandListener = await GiftListsCommandListener.StartAsync(_infrastructure.RabbitMqConnectionString);
 
@@ -107,8 +145,16 @@ public sealed class GatewayFixture : IAsyncLifetime
         _gatewayFactory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            // GL-37: the only logging provider on the real Gateway host under test — see
+            // _logCapture's own doc comment for why this is the actual proof a release secret
+            // never reaches a log line.
+            builder.ConfigureLogging(logging =>
+            {
+                logging.ClearProviders();
+                logging.AddProvider(_logCapture);
+            });
             // GL-73: an extra handler per GiftLists event type, alongside (not instead of) the
-            // production ones Program.cs's own SubscribeToGiftListsEventsAsync wires up — Rebus
+            // production ones GatewayInfrastructureServiceCollectionExtensions.SubscribeToUpstreamEventsAsync wires up — Rebus
             // runs every registered IHandleMessages<T> for a message and acks only once all of
             // them finish, so GiftListsEventProbe's count can only advance once the production
             // handler's own processing (successful or not) is also done.
@@ -134,6 +180,7 @@ public sealed class GatewayFixture : IAsyncLifetime
         });
         AuthClient = new AuthService.AuthServiceClient(channel);
         GiftListsClient = new GiftListsService.GiftListsServiceClient(channel);
+        ReservationsClient = new ReservationsService.ReservationsServiceClient(channel);
 
         GraphQlHttpClient = _gatewayFactory.CreateClient();
         Database = _gatewayFactory.Services.GetRequiredService<IMongoDatabase>();
@@ -146,6 +193,8 @@ public sealed class GatewayFixture : IAsyncLifetime
         _gatewayFactory.Dispose();
         await _identityResponderHost.StopAsync();
         _identityResponderHost.Dispose();
+        await _reservationsResponderHost.StopAsync();
+        _reservationsResponderHost.Dispose();
         await _upstreamEventPublisher.DisposeAsync();
         await _giftListsCommandListener.DisposeAsync();
         await _infrastructure.DisposeAsync();
