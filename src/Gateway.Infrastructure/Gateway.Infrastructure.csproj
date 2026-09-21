@@ -38,6 +38,9 @@
          GrpcServices="Both" rationale as identity.proto above (unused server-side Client type,
          used by Gateway.IntegrationTests to drive the real generated client). -->
     <Protobuf Include="..\..\protos\giftlists.proto" GrpcServices="Both" />
+    <!-- GL-37: the browser's grpc-web entry point for reserving a gift — same GrpcServices="Both"
+         rationale as identity.proto/giftlists.proto above. -->
+    <Protobuf Include="..\..\protos\reservations.proto" GrpcServices="Both" />
   </ItemGroup>
 
   <ItemGroup>

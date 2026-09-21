@@ -50,7 +50,10 @@
     <!-- GL-38: publishes the real Reservations.Contracts.Reservations.Events.GiftReservedV1 the
          reservation projection is built from — same reasoning as GiftLists.Contracts above. -->
     <PackageReference Include="Reservations.Contracts" Version="[0.2.0]" />
-    <!-- GL-75: shared QueueCleanup, rather than the fourth copy of it. -->
-    <PackageReference Include="BuildingBlocks.Testing" Version="[0.1.0]" />
+    <!-- GL-75: shared QueueCleanup, rather than the fourth copy of it. GL-37: 0.2.0 promotes
+         LogCapture here too (BuildingBlocks.Testing's own doc comment), which
+         ReleaseSecretPrivacyTests/ReservationsGrpcServiceTests use to prove a release secret
+         never reaches a Gateway log line. -->
+    <PackageReference Include="BuildingBlocks.Testing" Version="[0.2.0]" />
   </ItemGroup>
 </Project>

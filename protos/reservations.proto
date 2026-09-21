@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package giftlist.reservations.v1;
+
+option csharp_namespace = "Gateway.Infrastructure.Reservations.Grpc";
+
+// GL-37: the browser's grpc-web entry point for reserving a gift. Mirrors identity.proto's own
+// rationale (GL-18 is the precedent this file follows): one RPC, request/reply over the Rebus
+// bridge (ARCHITECTURE.md "Command → event flow"), because the caller genuinely needs a yes/no —
+// did someone beat me to it? — before it can respond.
+//
+// ReserveGiftRequest carries a share token and an item id and NOTHING else — deliberately no
+// list_id field anywhere on this message. The share token is the whole credential: it resolves
+// to a list through the Gateway's own read model (the same lookup sharedGiftList(token)/
+// ViewGiftList(GuestWithToken) uses), so a client can only ever reserve against the one list its
+// own share link points at, never an arbitrary id it happens to guess. Pinned by
+// Gateway.UnitTests' ReservationsProtoContractTests, the same way giftlists.proto's own
+// owner/requester ban is pinned by GiftListsProtoContractTests.
+//
+// release_secret appears in ReserveGiftResponse and NOWHERE ELSE (ARCHITECTURE.md "Reservation
+// privacy") — not queried, not projected, not published, not logged. ReserveGiftResponse
+// deliberately carries no reserved_at either: GL-38 already drops that field at the ACL boundary
+// (Reservations.Contracts.Reservations.Events.GiftReservedV1's own doc comment), and this RPC
+// keeps that rule rather than reopening a second path for it.
+//
+// Consumed from two places: Grpc.Tools generates the C# server stubs straight from this file for
+// Gateway.Infrastructure (see Gateway.Infrastructure.csproj's <Protobuf> item); `buf generate`
+// (clients/typescript/buf.gen.yaml) generates the TypeScript client for the SPA from the exact
+// same file, so the two never drift from each other.
+service ReservationsService {
+  rpc ReserveGift(ReserveGiftRequest) returns (ReserveGiftResponse);
+}
+
+message ReserveGiftRequest {
+  string share_token = 1;
+  string item_id = 2;
+}
+
+message ReserveGiftResponse {
+  // Returned here and ONLY here (ARCHITECTURE.md "Reservation privacy") — the browser is
+  // responsible for keeping it (localStorage), since the Gateway never stores or re-serves it.
+  string release_secret = 1;
+}

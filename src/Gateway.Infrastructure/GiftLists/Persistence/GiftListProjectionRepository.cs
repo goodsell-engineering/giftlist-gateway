@@ -69,7 +69,7 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
     }
 
     /// <summary>
-    /// The cheap belt behind GL-32's real control. <c>GetSharedGiftListValidator</c> shape-checks
+    /// The cheap belt behind GL-32's real control. <c>ViewGiftListValidator</c> (via <c>ShareTokenFormat</c>) shape-checks
     /// the token at the boundary before the interactor runs, so an empty one cannot arrive through
     /// <c>sharedGiftList(token)</c>; this guard costs one comparison and means any <em>future</em>
     /// caller of this port cannot turn an empty string into a query either. That matters
