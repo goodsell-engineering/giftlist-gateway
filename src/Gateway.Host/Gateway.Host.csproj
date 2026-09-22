@@ -4,7 +4,11 @@
     <ProjectReference Include="..\Gateway.Infrastructure\Gateway.Infrastructure.csproj" />
     <!-- GL-52: composition root wires the shared Mongo/Rebus/health-check helpers directly.
          CONVENTIONS.md "Project reference graph" permits BuildingBlocks.Infrastructure to be referenced by Host as
-         well as Infrastructure. -->
-    <PackageReference Include="BuildingBlocks.Infrastructure" Version="[0.1.0]" />
+         well as Infrastructure. GL-43: bumped to 0.2.0 for the explicit Rebus retry/error-queue
+         policy (RebusConfigurationExtensions — MaxDeliveryAttempts, ErrorQueueName), then to
+         0.2.1 (0.2.0's poison classification checked the wrong exception type and never actually
+         fired). No further per-host change needed: the error queue name is derived automatically
+         from the "gateway" input queue name this host already passes to AddBuildingBlocksRebus. -->
+    <PackageReference Include="BuildingBlocks.Infrastructure" Version="[0.2.1]" />
   </ItemGroup>
 </Project>
