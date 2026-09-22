@@ -1,6 +1,8 @@
 using HotChocolate.AspNetCore;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Hosting;
 
 namespace Gateway.Infrastructure.Platform;
 
@@ -13,7 +15,7 @@ namespace Gateway.Infrastructure.Platform;
 /// </summary>
 public static class GatewayGraphQlEndpointRouteBuilderExtensions
 {
-    public static IEndpointRouteBuilder MapGatewayGraphQlEndpoints(this IEndpointRouteBuilder endpoints)
+    public static IEndpointRouteBuilder MapGatewayGraphQlEndpoints(this IEndpointRouteBuilder endpoints, IHostEnvironment environment)
     {
         // GL-105: HotChocolate's own defaults allow a query to be sent as a GET, with every
         // argument — including sharedGiftList's bearer-style `token` (ARCHITECTURE.md "Auth &
@@ -23,10 +25,63 @@ public static class GatewayGraphQlEndpointRouteBuilderExtensions
         // job — serving the IDE at a bare GET /graphql — untouched, since that is a separate
         // code path (GraphQLServerOptions.Tool, left at its default) from GET-as-a-query-
         // transport (AllowedGetOperations).
+        //
+        // GL-44/GL-113: the IDE (Nitro, served at that same bare GET), `?sdl` (the whole schema
+        // as one credential-free GET — GL-113's own finding) and introspection (a query's own
+        // right to ask the schema about itself, set alongside AddGraphQLServer() in
+        // GatewayInfrastructureServiceCollectionExtensions.AddGraphQl, since DisableIntrospection
+        // is not a GraphQLServerOptions switch) are decided together, as one policy, rather than
+        // left at HotChocolate's defaults — which serve all three, unconditionally, to anyone, in
+        // every environment. None of the three is needed for the SPA, which only ever POSTs the
+        // fixed operations giftlist-web itself defines. Development keeps all three (the tool a
+        // developer actually reaches for, and the introspection any GraphQL client codegen needs
+        // to work against this schema at all); every other environment — ASPNETCORE_ENVIRONMENT
+        // is unset in devenv's own compose, i.e. Production, GL-109's own finding — turns all
+        // three off, so an unauthenticated caller gets neither the IDE nor the schema, whole or by
+        // asking it questions.
+        var isDevelopment = environment.IsDevelopment();
         endpoints.MapGraphQL().WithOptions(options =>
         {
             options.AllowedGetOperations = AllowedGetOperations.None;
+            options.Tool.Enable = isDevelopment;
+            options.EnableSchemaRequests = isDevelopment;
         });
         return endpoints;
     }
+
+    /// <summary>
+    /// GL-109: guards against a different bug than <see cref="MapGatewayGraphQlEndpoints"/>'s own
+    /// <c>AllowedGetOperations.None</c> already does. That setting answers a plain GET carrying
+    /// `query=` with a clean 405 — but only when HotChocolate's content negotiation treats the
+    /// request as GET-as-a-query-transport in the first place. When the request's Accept header
+    /// prefers <c>text/html</c> instead — a browser address bar, not the SPA or a generated
+    /// GraphQL client, neither of which ever sends that Accept header — HotChocolate instead
+    /// reaches for the IDE-serving code path even though a `query` string parameter is present,
+    /// and trips over it there: an unhandled exception that, absent this guard, reached the
+    /// caller as a 500. Empirically (GL-109's own finding, read from the code rather than run,
+    /// since this repo's Program.cs calls neither <c>UseDeveloperExceptionPage</c> nor
+    /// <c>UseExceptionHandler</c> itself) that renders as a full stack-trace developer exception
+    /// page only in Development — <c>WebApplication.Build()</c> auto-registers that middleware
+    /// itself, but only when <c>ASPNETCORE_ENVIRONMENT</c> is Development — and as a bare,
+    /// empty-bodied 500 everywhere else, since devenv's own compose sets no
+    /// <c>ASPNETCORE_ENVIRONMENT</c> for this service at all (i.e. Production). Production's
+    /// answer leaks nothing, but neither is it deliberate — GL-105 already gives an API client a
+    /// clean 405 for this exact shape of request, and a browser deserves the same one, in every
+    /// environment. Short-circuiting here, ahead of <c>MapGraphQL()</c> and independent of the
+    /// Accept header entirely, is what gets there without depending on which internal branch
+    /// HotChocolate's content negotiation happens to take.
+    /// </summary>
+    public static IApplicationBuilder UseGatewayGraphQlGetQueryGuard(this IApplicationBuilder app) =>
+        app.Use(async (context, next) =>
+        {
+            if (HttpMethods.IsGet(context.Request.Method)
+                && context.Request.Path.StartsWithSegments("/graphql", StringComparison.OrdinalIgnoreCase)
+                && context.Request.Query.ContainsKey("query"))
+            {
+                context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
+                return;
+            }
+
+            await next(context);
+        });
 }

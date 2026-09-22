@@ -84,4 +84,33 @@ public sealed class GraphQlGetRequestTests(GatewayFixture gateway) : IAsyncLifet
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("text/html", response.Content.Headers.ContentType?.MediaType ?? string.Empty, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// GL-109: the bug <see cref="SharedGiftList_ShouldBeRejected_WhenSentAsAnHttpGetWithTheTokenInTheQueryString"/>
+    /// does not cover — a browser address bar sending the exact same GET-with-`query=` shape, but
+    /// with an <c>Accept</c> header that prefers <c>text/html</c> (nobody's GraphQL client sends
+    /// that; a browser always does). Before <c>UseGatewayGraphQlGetQueryGuard</c>, HotChocolate's
+    /// content negotiation routed this toward the IDE-serving code path instead of
+    /// <c>AllowedGetOperations.None</c>'s 405, and threw there — reported as a 500 with a
+    /// developer-exception-page stack trace in Development, where this fixture runs
+    /// (<c>GatewayFixture</c> pins <c>ASPNETCORE_ENVIRONMENT=Development</c>).
+    /// </summary>
+    [Fact]
+    public async Task GraphQlGetWithQuery_ShouldBeRejected_WhenTheRequestPrefersHtml()
+    {
+        // Arrange — a trivial, always-valid query; this test is about the transport-level guard,
+        // not about what the query itself would have returned.
+        const string query = "{ __typename }";
+        var url = $"/graphql?query={Uri.EscapeDataString(query)}";
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Accept.ParseAdd("text/html");
+
+        // Act
+        using var response = await gateway.GraphQlHttpClient.SendAsync(request);
+
+        // Assert — the same deliberate 405 GL-105 already gives an API client for this shape of
+        // request, not a 500: the guard short-circuits ahead of MapGraphQL() entirely, so the
+        // Accept header this test sets never reaches HotChocolate's own content negotiation.
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
+    }
 }

@@ -41,11 +41,12 @@ namespace Gateway.Infrastructure.Reservations.Grpc;
 /// The item id is parsed the same way <c>GiftListsGrpcService.ParseId</c> parses every other
 /// caller-supplied id: a malformed (non-Guid) string is rejected here as
 /// <see cref="GiftListErrors.InvalidId"/>, but <see cref="Guid.Empty"/> is deliberately let
-/// through to Reservations rather than pre-empted — Reservations' own <c>ReserveGiftValidator</c>
-/// already rejects an empty id as <c>reservation.invalid_id</c>, and letting that one specific
-/// case reach the real service is what proves this mapper's generic <c>ErrorKind</c> translation
-/// actually carries that code end to end, rather than assuming it from the identical-looking
-/// Gateway-side code of the same name.
+/// through to Reservations rather than pre-empted — letting that one specific case travel the
+/// bridge (to whatever stands in for Reservations on the far end — the fake in
+/// <c>Gateway.IntegrationTests</c>, the real <c>ReserveGiftValidator</c> in production) is what
+/// proves this mapper's generic <c>ErrorKind</c> translation actually carries a Validation-kind
+/// fault and its code end to end, rather than assuming it from the identical-looking Gateway-side
+/// code of the same name.
 /// </para>
 /// <para>
 /// Maps anonymously (<c>GatewayGrpcEndpointRouteBuilderExtensions</c>) — like <c>AuthGrpcService</c>,

@@ -39,7 +39,18 @@ public sealed class GatewayFixture : IAsyncLifetime
 
     private const string IdentityQueueName = "identity";
 
-    /// <summary>Matches <see cref="Gateway.Infrastructure.Platform.GatewayMessageRouting.ReservationsQueueName"/> — kept as a local literal rather than a reference, the same way <see cref="IdentityQueueName"/> is, since Host may not reference another service's Contracts and this fixture stands in for that service on the real broker.</summary>
+    /// <summary>
+    /// Matches <see cref="Gateway.Infrastructure.Platform.GatewayMessageRouting.ReservationsQueueName"/>
+    /// — kept as a local literal rather than a reference to that constant, the same way
+    /// <see cref="IdentityQueueName"/> is (GL-109 review: not because Host/Contracts references
+    /// are relevant here — this is a test project, not Host, and could reference the constant
+    /// freely). A fake standing in for a far service on the real broker has to carry that
+    /// service's own queue name independently of the code under test: if a reference to
+    /// <c>GatewayMessageRouting.ReservationsQueueName</c> were used instead and that constant were
+    /// ever changed to something wrong, this fixture would silently follow it to the same wrong
+    /// queue and the test would still pass, catching nothing. A local literal is the one
+    /// arrangement where a wrong <c>GatewayMessageRouting</c> constant actually fails a test.
+    /// </summary>
     private const string ReservationsQueueName = "reservation";
 
     private const string DatabaseName = "gateway";

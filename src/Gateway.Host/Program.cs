@@ -17,7 +17,7 @@ builder.Services.AddBuildingBlocksMongo(builder.Configuration, "gateway");
 // (not Host) reference another service's Contracts.
 builder.Services.AddBuildingBlocksRebus(builder.Configuration, "gateway", GatewayMessageRouting.Configure);
 builder.Services.AddBuildingBlocksHealthChecks(builder.Configuration);
-builder.Services.AddGatewayInfrastructure(builder.Configuration);
+builder.Services.AddGatewayInfrastructure(builder.Configuration, builder.Environment);
 
 // GL-18: the SPA talks grpc-web straight to the Gateway — there is no GraphQL/REST hop in front
 // of it for Phase 1 auth. Browser and Gateway are different origins in dev (5173 vs 8080) and
@@ -54,6 +54,13 @@ app.UseCors(GatewayCorsPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
 
+// GL-44: reads endpoint metadata (RequireRateLimiting, set per grpc-web endpoint in
+// MapGatewayGrpcServices) so it must sit ahead of endpoint execution — same ordering rule as
+// UseAuthorization above. Policies themselves (limits, partition key) are decided in
+// GatewayInfrastructureServiceCollectionExtensions.AddRateLimiting, not here — this file wires,
+// it does not decide.
+app.UseRateLimiter();
+
 // Decodes grpc-web framing (HTTP/1.1 + base64/text-friendly) into ordinary gRPC before it
 // reaches AuthGrpcService — applied to every mapped grpc service by default rather than opted in
 // per endpoint, since Phase 1 has no non-grpc-web caller of this Gateway.
@@ -63,7 +70,11 @@ app.MapGatewayGrpcServices();
 // updates"); HotChocolate's endpoint upgrades the connection itself, but only if ASP.NET Core's
 // WebSocket middleware is in the pipeline ahead of it.
 app.UseWebSockets();
-app.MapGatewayGraphQlEndpoints();
+// GL-109: ahead of MapGraphQL() itself — see UseGatewayGraphQlGetQueryGuard's own remarks for
+// which bug this guards against and why it has to run first, not as an option MapGraphQL() is
+// given.
+app.UseGatewayGraphQlGetQueryGuard();
+app.MapGatewayGraphQlEndpoints(app.Environment);
 
 // GL-23/GL-38: the indexes the read models' queries rely on, and the subscriptions that let
 // GiftLists' and Reservations' integration events actually reach this process — both correctness
