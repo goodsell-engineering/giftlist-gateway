@@ -54,7 +54,8 @@
          project's own GiftLists/Persistence folder as BoundedCasRetry/ProjectionCasRetryPolicy)
          now lives in BuildingBlocks.Persistence. -->
     <PackageReference Include="BuildingBlocks" Version="[0.1.0]" />
-    <PackageReference Include="BuildingBlocks.Infrastructure" Version="[0.1.0]" />
+    <!-- GL-43: bumped to 0.2.0 for the explicit Rebus retry/error-queue policy. -->
+    <PackageReference Include="BuildingBlocks.Infrastructure" Version="[0.2.0]" />
     <PackageReference Include="Identity.Contracts" Version="[0.1.0]" />
     <!-- GL-23: the Gateway's read model is built from GiftLists' own integration events —
          CONVENTIONS.md "Project reference graph" permits Infrastructure to reference another service's *.Contracts. -->
