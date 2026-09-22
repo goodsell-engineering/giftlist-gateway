@@ -206,11 +206,12 @@ public sealed class ReservationsGrpcServiceTests(GatewayFixture gateway) : IAsyn
 
     /// <summary>
     /// <c>ReservationsGrpcService.ParseId</c>'s own remarks: <see cref="Guid.Empty"/> is a
-    /// well-formed Guid, so the Gateway deliberately does not pre-empt it — this proves the value
-    /// reaches Reservations' own <c>ReserveGiftValidator</c> for real (mirrored by
-    /// <c>Reservations.IntegrationTests.Reservations.ReserveGiftTests.ReserveGift_ShouldReturnInvalidId_WhenTheListIdIsEmpty</c>
-    /// on the other side of this same bridge) rather than being asserted only against this
-    /// fixture's own fake.
+    /// well-formed Guid, so the Gateway deliberately does not pre-empt it — this proves the bridge
+    /// carries a Validation-kind fault and its code end to end. It reaches the fake standing in
+    /// for Reservations here (<see cref="FakeReservationsResponder"/>), not the real service —
+    /// that fake replies exactly as Reservations' own <c>ReserveGiftValidator</c> would, which is
+    /// asserted independently, on the real service, by
+    /// <c>Reservations.IntegrationTests.Reservations.ReserveGiftTests.ReserveGift_ShouldReturnInvalidId_WhenTheListIdIsEmpty</c>.
     /// </summary>
     [Fact]
     public async Task ReserveGift_ShouldFailWithInvalidArgument_WhenTheItemIdIsEmpty()

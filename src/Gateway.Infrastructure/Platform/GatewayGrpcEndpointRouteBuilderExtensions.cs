@@ -23,14 +23,22 @@ namespace Gateway.Infrastructure.Platform;
 /// <c>Program.cs</c> calls <c>app.UseAuthorization()</c> with no default policy, so
 /// authentication is not enforced by default and has to be opted into per endpoint here, the same
 /// way <c>[Authorize]</c> would on an MVC controller.
+///
+/// GL-44: <see cref="AuthGrpcService"/> and <see cref="ReservationsGrpcService"/> — the two
+/// no-JWT edges above, exactly — also carry <c>RequireRateLimiting</c>, one policy per service
+/// (<see cref="GatewayRateLimitPolicies"/>; the limits and the partition key are decided and
+/// documented in <c>GatewayInfrastructureServiceCollectionExtensions.AddRateLimiting</c>).
+/// <see cref="GiftListsGrpcService"/> carries no policy — its <c>RequireAuthorization()</c> is
+/// the control that matters for an authenticated caller; see that method's own remarks for why
+/// rate limiting was not extended to it here.
 /// </summary>
 public static class GatewayGrpcEndpointRouteBuilderExtensions
 {
     public static IEndpointRouteBuilder MapGatewayGrpcServices(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGrpcService<AuthGrpcService>();
+        endpoints.MapGrpcService<AuthGrpcService>().RequireRateLimiting(GatewayRateLimitPolicies.Auth);
         endpoints.MapGrpcService<GiftListsGrpcService>().RequireAuthorization();
-        endpoints.MapGrpcService<ReservationsGrpcService>();
+        endpoints.MapGrpcService<ReservationsGrpcService>().RequireRateLimiting(GatewayRateLimitPolicies.Reservation);
         return endpoints;
     }
 }

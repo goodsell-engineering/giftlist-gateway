@@ -6,6 +6,8 @@ using Gateway.Application.Reservations;
 using Gateway.Infrastructure.Platform;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 
 namespace Gateway.UnitTests.Support;
 
@@ -44,11 +46,25 @@ internal static class GatewayPorts
 
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddGatewayInfrastructure(configuration);
+        // GL-44: AddGatewayInfrastructure now takes an IHostEnvironment, to decide the
+        // GraphQL IDE/introspection/schema-request policy (GatewayInfrastructureServiceCollectionExtensions.AddGraphQl) —
+        // Development here for the same reason the placeholder RSA key exists: satisfying the
+        // signature, not exercising GraphQL at all (nothing in this test builds or calls the
+        // request executor).
+        services.AddGatewayInfrastructure(configuration, new FakeHostEnvironment());
         services.AddScoped<IGiftListProjectionRepository>(_ => giftLists);
         services.AddScoped<IReservationProjectionRepository>(_ => reservations);
 
         var scope = services.BuildServiceProvider().CreateScope();
         return scope.ServiceProvider.GetRequiredService<IInteractor<ViewGiftListRequest, ViewGiftListResponse>>();
+    }
+
+    /// <summary>Minimal <see cref="IHostEnvironment"/> — no ASP.NET Core host runs in this test, so nothing beyond <see cref="EnvironmentName"/> is ever read.</summary>
+    private sealed class FakeHostEnvironment : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = Environments.Development;
+        public string ApplicationName { get; set; } = nameof(GatewayPorts);
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }

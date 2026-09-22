@@ -26,8 +26,10 @@ namespace Gateway.IntegrationTests.Support;
 /// not one of them: it is deliberately left to fall through to the same
 /// <c>reservation.invalid_id</c> reply Reservations' own <c>ReserveGiftValidator</c> would give,
 /// so an empty item id reaching this fake (a well-formed but rejectable Guid — GL-37,
-/// <c>ReservationsGrpcService.ParseId</c>'s own remarks) is what proves that code's mapping, not
-/// merely something asserted about this fixture's own behaviour.
+/// <c>ReservationsGrpcService.ParseId</c>'s own remarks) is what proves the bridge carries a
+/// Validation-kind fault and its code end to end, not merely something asserted about this
+/// fixture's own behaviour in isolation — this fake, not the real service, is what the value
+/// actually reaches.
 /// </summary>
 public sealed class FakeReservationsResponder(IBus bus) : IHandleMessages<ReserveGift>
 {
@@ -83,11 +85,16 @@ public sealed class FakeReservationsResponder(IBus bus) : IHandleMessages<Reserv
         // from an accidental substring match, same reasoning as FakeIdentityResponder's token.
         var releaseSecret = $"release-secret-{message.ListId:N}-{message.ItemId:N}";
         var reservedAt = DateTimeOffset.UtcNow;
-        await bus.Reply(new ReserveGiftReply(releaseSecret, reservedAt));
 
-        // Mirrors the real ReserveGiftInteractor's own "save first, publish second"
-        // (ARCHITECTURE.md "Event publishing: synchronous") — the reply above is the "save", this
-        // is the publish, and only ever follows a successful reply, never a faulted one.
+        // GL-109 review: ordered to mirror the real ReserveGiftInteractor, not this fixture's own
+        // convenience — that interactor saves the reservation, then publishes GiftReservedV1
+        // (ARCHITECTURE.md "Event publishing: synchronous"), and only afterwards does its caller
+        // (the Rebus handler wrapping it) reply with the response. This fake has no persistence of
+        // its own to stand in for "save", so the publish below is the whole of that side; the
+        // reply that follows it stands in for the handler's own reply, sent only once the publish
+        // (the real interactor's last step before returning) has happened — never before it, and
+        // never for a faulted outcome.
         await bus.Publish(new GiftReservedV1(message.ListId, message.ItemId, reservedAt));
+        await bus.Reply(new ReserveGiftReply(releaseSecret, reservedAt));
     }
 }

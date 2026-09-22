@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Threading.RateLimiting;
 using Gateway.Application.Common;
 using Gateway.Application.GiftLists;
 using Gateway.Application.GiftLists.GetMyGiftLists;
@@ -19,8 +20,11 @@ using Gateway.Infrastructure.Reservations.Messaging;
 using Gateway.Infrastructure.Reservations.Persistence;
 using GiftLists.Contracts.GiftLists.Events;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
 using Rebus.Bus;
@@ -38,13 +42,15 @@ namespace Gateway.Infrastructure.Platform;
 /// </summary>
 public static class GatewayInfrastructureServiceCollectionExtensions
 {
-    public static IServiceCollection AddGatewayInfrastructure(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddGatewayInfrastructure(
+        this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         services.AddGrpc();
         AddGiftListProjection(services);
         AddReservationProjection(services);
-        AddGraphQl(services);
+        AddGraphQl(services, environment);
         AddAuthentication(services, configuration);
+        AddRateLimiting(services);
         return services;
     }
 
@@ -140,7 +146,7 @@ public static class GatewayInfrastructureServiceCollectionExtensions
     /// run last. One open-generic decorator pair, applied to every IInteractor&lt;,&gt; — Validation,
     /// then Logging, in that order in every service (CONVENTIONS.md "Use cases").
     /// </summary>
-    private static void AddGraphQl(IServiceCollection services)
+    private static void AddGraphQl(IServiceCollection services, IHostEnvironment environment)
     {
         services.Decorate(typeof(IInteractor<,>), typeof(Validating<,>));
         services.Decorate(typeof(IInteractor<,>), typeof(Logging<,>));
@@ -151,8 +157,80 @@ public static class GatewayInfrastructureServiceCollectionExtensions
             // GL-38: the one subscription, share-token scoped; in-memory topics, so one Gateway
             // instance (ARCHITECTURE.md "Realtime updates").
             .AddSubscriptionType<GiftListSubscriptions>()
-            .AddInMemorySubscriptions();
+            .AddInMemorySubscriptions()
+            // GL-44: introspection is part of the same "who gets to see this schema" policy as
+            // the IDE and `?sdl` (GatewayGraphQlEndpointRouteBuilderExtensions.
+            // MapGatewayGraphQlEndpoints, where the other two are set and the decision is written
+            // up) — kept here instead because HotChocolate.Types' DisableIntrospection is an
+            // IRequestExecutorBuilder concern (a document-validation rule baked into the schema at
+            // build time), not a GraphQLServerOptions transport switch the endpoint mapping can
+            // reach. Development allows it (any client library that introspects a schema to
+            // generate its own types needs it); every other environment does not.
+            .DisableIntrospection(!environment.IsDevelopment());
     }
+
+    /// <summary>
+    /// GL-44: rate limiting on the Gateway's two no-JWT edges — <c>AuthGrpcService</c>
+    /// (SignUp/Login) and <c>ReservationsGrpcService</c> (ReserveGift, the share-token guest
+    /// surface) — applied per grpc-web endpoint in <c>GatewayGrpcEndpointRouteBuilderExtensions</c>
+    /// via <see cref="GatewayRateLimitPolicies"/>. <c>GiftListsGrpcService</c> carries a JWT on
+    /// every call and is deliberately left unlimited here (its own <c>RequireAuthorization()</c>
+    /// is the control that matters for it); a signed-in caller could be partitioned by user id
+    /// instead of IP if this were ever extended to it, but neither of these two endpoints ever
+    /// sees a JWT, so IP address (<see cref="ClientIp"/>) is what's left to partition by — a
+    /// share-token guest and a not-yet-registered sign-up both look the same to this service:
+    /// an anonymous caller from one address.
+    /// </summary>
+    /// <remarks>
+    /// Known limitation, accepted rather than solved here: a rejected request gets a plain HTTP
+    /// 429, not a grpc <c>RESOURCE_EXHAUSTED</c> status — <c>Microsoft.AspNetCore.RateLimiting</c>
+    /// operates below grpc-web's own status/trailer framing (the same layering problem
+    /// <c>Program.cs</c>'s CORS comment describes for exposed headers), and wiring a proper grpc
+    /// status through would mean a rate-limiting grpc <c>Interceptor</c> instead of this
+    /// middleware. Good enough for this demo; flagged rather than silently accepted.
+    /// </remarks>
+    private static void AddRateLimiting(IServiceCollection services)
+    {
+        services.AddRateLimiter(options =>
+        {
+            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+            // 5/minute/IP: generous enough for a real caller who mistypes a password or retries a
+            // sign-up once or twice, tight enough to blunt scripted credential stuffing / sign-up
+            // spam against a demo with no CAPTCHA and no email verification step.
+            options.AddPolicy(GatewayRateLimitPolicies.Auth, context => RateLimitPartition.GetFixedWindowLimiter(
+                ClientIp(context),
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 5,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0,
+                }));
+
+            // 20/minute/IP: a guest genuinely working down a gift list reserving several items in
+            // a few minutes is ordinary traffic; this is sized to stop a scripted sweep of every
+            // item on a list (or across several lists reached through one token/IP), not to
+            // throttle a person.
+            options.AddPolicy(GatewayRateLimitPolicies.Reservation, context => RateLimitPartition.GetFixedWindowLimiter(
+                ClientIp(context),
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 20,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0,
+                }));
+        });
+    }
+
+    /// <summary>
+    /// No forwarded-header handling (no reverse proxy sits in front of this Gateway in devenv) —
+    /// the direct TCP peer address is the whole story here, same as it would be for any other
+    /// per-IP concern this service might grow. Revisit if a proxy is ever introduced in front of
+    /// it (CONVENTIONS.md has no rule for this yet; it would need `ForwardedHeadersMiddleware`,
+    /// applied before this reads <see cref="HttpContext.Connection"/>, not after).
+    /// </summary>
+    private static string ClientIp(HttpContext context) =>
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
     /// <summary>
     /// Validates the JWT the SPA sends with every GraphQL request against Identity's public
