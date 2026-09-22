@@ -96,8 +96,8 @@ public sealed class GraphQlSchemaExposureTests(GatewayFixture gateway) : IAsyncL
         // so this cannot pass against an empty or unrelated 200.
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var sdl = await response.Content.ReadAsStringAsync();
-        Assert.Contains("type Query", sdl, StringComparison.Ordinal);
-        Assert.Contains("sharedGiftList", sdl, StringComparison.Ordinal);
+        Assert.Contains("query: GiftListQueries", sdl, StringComparison.Ordinal);
+        Assert.Contains("sharedGiftList(", sdl, StringComparison.Ordinal);
     }
 
     [Fact]
