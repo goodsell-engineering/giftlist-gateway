@@ -17,6 +17,11 @@ namespace Gateway.IntegrationTests.Platform;
 /// strings <see cref="GatewayFixture.InitializeAsync"/> already put in process-wide environment
 /// variables, which <see cref="WebApplication.CreateBuilder"/> reads regardless of which
 /// <c>WebApplicationFactory</c> built the host), rather than merely asserted from reading the code.
+///
+/// The "on in Development" half is pinned here too
+/// (<see cref="GraphQlEndpoint_ShouldServeTheWholeSchema_WhenInDevelopment"/>), against the
+/// fixture's own host: without it, the Production assertions are one-directional and a schema
+/// endpoint that never worked at all would satisfy them.
 /// </summary>
 [Collection(GatewayCollection.Name)]
 public sealed class GraphQlSchemaExposureTests(GatewayFixture gateway) : IAsyncLifetime, IDisposable
@@ -67,6 +72,32 @@ public sealed class GraphQlSchemaExposureTests(GatewayFixture gateway) : IAsyncL
 
         // Assert
         Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GraphQlEndpoint_ShouldServeTheWholeSchema_WhenInDevelopment()
+    {
+        // Arrange — the SAME request as GraphQlEndpoint_ShouldRejectSchemaRequests_WhenNotInDevelopment,
+        // against the Development host. THIS TEST IS WHY THAT ONE MEANS ANYTHING: its assertion is
+        // NotEqual(OK), which a 404 from a misspelled path, a broken host or an `?sdl` HotChocolate
+        // had never implemented would satisfy just as well. Pinning that the request DOES return
+        // the schema when the policy says it should is what makes the pair falsifiable — flip
+        // EnableSchemaRequests to a constant either way and exactly one of the two goes red.
+        //
+        // It also states the demo's real exposure as a fact rather than a reading of compose:
+        // devenv runs as Development (DOTNET_ENVIRONMENT in its x-dotnet-env anchor), so this is
+        // what the running stack serves an unauthenticated caller — GL-113's finding, kept
+        // deliberately for a laptop demo.
+
+        // Act — GL-113's own request shape: GET /graphql?sdl, no credential.
+        using var response = await gateway.GraphQlHttpClient.GetAsync("/graphql?sdl");
+
+        // Assert — 200 with the SDL itself, not merely a non-error: the body must carry the schema
+        // so this cannot pass against an empty or unrelated 200.
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var sdl = await response.Content.ReadAsStringAsync();
+        Assert.Contains("type Query", sdl, StringComparison.Ordinal);
+        Assert.Contains("sharedGiftList", sdl, StringComparison.Ordinal);
     }
 
     [Fact]

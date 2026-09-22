@@ -171,6 +171,9 @@ public sealed class GatewayFixture : IAsyncLifetime
             // handler's own processing (successful or not) is also done.
             builder.ConfigureServices(services =>
             {
+                // GL-44: every request needs a client address for the rate limiters to partition
+                // on; TestServer supplies none. See TestClientAddressStartupFilter.
+                services.AddSingleton<IStartupFilter, TestClientAddressStartupFilter>();
                 services.AddSingleton<GiftListsEventProbe>();
                 services.AddRebusHandler<GiftListsEventProbeHandler<GiftListCreatedV1>>();
                 services.AddRebusHandler<GiftListsEventProbeHandler<GiftListRenamedV1>>();

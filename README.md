@@ -104,10 +104,17 @@ place to find all of them together.
   `GraphQLServerOptions.Tool.Enable` and `.EnableSchemaRequests`
   (`GatewayGraphQlEndpointRouteBuilderExtensions.MapGatewayGraphQlEndpoints`) and
   `DisableIntrospection` (`GatewayInfrastructureServiceCollectionExtensions.AddGraphQl`) all key
-  off `IHostEnvironment.IsDevelopment()`. Development keeps all three; everywhere else — devenv's
-  compose sets no `ASPNETCORE_ENVIRONMENT` for this service, i.e. Production, by default — turns
-  them off. `GraphQlSchemaExposureTests` proves the "off" half against a second, Production-mode
-  host built alongside the normal Development one.
+  off `IHostEnvironment.IsDevelopment()`. Development keeps all three; every other environment
+  turns them off. **devenv runs as Development** — its compose sets `DOTNET_ENVIRONMENT:
+  Development` in the `x-dotnet-env` anchor the gateway inherits, and the host honours that
+  whenever `ASPNETCORE_ENVIRONMENT` is unset, which it is — **so the demo stack does serve the
+  IDE, `?sdl` and introspection**, to anyone who can reach the port. That is the intended answer
+  to GL-113 for a laptop demo that exists to be explored, not an oversight: what GL-113 asked for
+  is that the exposure be chosen, and the choice is "on where a developer is the only caller, off
+  everywhere else". A deployment that faces anything wider inherits the off half by having any
+  other environment name. `GraphQlSchemaExposureTests` proves the "off" half against a second,
+  Production-mode host built alongside the normal Development one, and the "on" half against the
+  Development host — both directions, so neither can pass for the wrong reason.
 - **`app.UseAuthorization()` with no default policy is intentional, not an oversight**: ownership
   lives in each interactor (see `ViewGiftListInteractor` and friends), and the middleware call
   exists only so `RequireAuthorization()`/`RequireRateLimiting()`
@@ -119,10 +126,11 @@ place to find all of them together.
   unhandled code path inside HotChocolate's own content negotiation instead, and threw. Read from
   the code rather than run in every environment: this repo's `Program.cs` calls neither
   `UseDeveloperExceptionPage` nor `UseExceptionHandler` itself, and `WebApplication.Build()` only
-  auto-registers the former when `ASPNETCORE_ENVIRONMENT` is Development — so the un-fixed
-  behaviour was a full stack-trace developer exception page in Development (where every test in
-  this repo runs), and a bare, empty-bodied 500 in Production (no leak, but not a deliberate
-  answer either). Fixed with `UseGatewayGraphQlGetQueryGuard`, a small middleware ahead of
+  auto-registers the former when the environment is Development — so the un-fixed behaviour was a
+  full stack-trace developer exception page in Development, and a bare, empty-bodied 500 in every
+  other environment (no leak, but not a deliberate answer either). **devenv is Development** (see
+  the bullet above), so the demo stack was serving the stack trace, not the bare 500 — which is
+  the more severe of the two readings, and the one this fix actually removes. Fixed with `UseGatewayGraphQlGetQueryGuard`, a small middleware ahead of
   `MapGraphQL()` that answers any GET carrying `query=` with the same 405, independent of the
   `Accept` header — deterministic, and not dependent on which internal HotChocolate branch a given
   Accept header happens to select. `GraphQlGetRequestTests.GraphQlGetWithQuery_ShouldBeRejected_WhenTheRequestPrefersHtml`

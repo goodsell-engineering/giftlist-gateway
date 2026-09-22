@@ -35,10 +35,18 @@ public static class GatewayGraphQlEndpointRouteBuilderExtensions
         // every environment. None of the three is needed for the SPA, which only ever POSTs the
         // fixed operations giftlist-web itself defines. Development keeps all three (the tool a
         // developer actually reaches for, and the introspection any GraphQL client codegen needs
-        // to work against this schema at all); every other environment — ASPNETCORE_ENVIRONMENT
-        // is unset in devenv's own compose, i.e. Production, GL-109's own finding — turns all
-        // three off, so an unauthenticated caller gets neither the IDE nor the schema, whole or by
-        // asking it questions.
+        // to work against this schema at all); every other environment turns all three off, so an
+        // unauthenticated caller gets neither the IDE nor the schema, whole or by asking it
+        // questions.
+        //
+        // WHICH ENVIRONMENT DEVENV ACTUALLY IS, since the policy above turns on it and an earlier
+        // draft of this comment had it backwards: devenv's compose sets DOTNET_ENVIRONMENT:
+        // Development in its x-dotnet-env anchor (docker-compose.yml, inherited by the gateway
+        // block), and the host honours DOTNET_ENVIRONMENT when ASPNETCORE_ENVIRONMENT is unset —
+        // which it is. SO THE DEMO STACK IS DEVELOPMENT AND SERVES ALL THREE, deliberately: it is
+        // a laptop demo whose whole point is being explorable. What GL-113 asked for is that this
+        // be chosen rather than inherited, and the choice is: on where a developer is the only
+        // caller, off wherever the environment is anything else.
         var isDevelopment = environment.IsDevelopment();
         endpoints.MapGraphQL().WithOptions(options =>
         {
@@ -61,11 +69,12 @@ public static class GatewayGraphQlEndpointRouteBuilderExtensions
     /// caller as a 500. Empirically (GL-109's own finding, read from the code rather than run,
     /// since this repo's Program.cs calls neither <c>UseDeveloperExceptionPage</c> nor
     /// <c>UseExceptionHandler</c> itself) that renders as a full stack-trace developer exception
-    /// page only in Development — <c>WebApplication.Build()</c> auto-registers that middleware
-    /// itself, but only when <c>ASPNETCORE_ENVIRONMENT</c> is Development — and as a bare,
-    /// empty-bodied 500 everywhere else, since devenv's own compose sets no
-    /// <c>ASPNETCORE_ENVIRONMENT</c> for this service at all (i.e. Production). Production's
-    /// answer leaks nothing, but neither is it deliberate — GL-105 already gives an API client a
+    /// page in Development — <c>WebApplication.Build()</c> auto-registers that middleware itself,
+    /// but only when the environment is Development — and as a bare, empty-bodied 500 everywhere
+    /// else. Note which of those devenv got: its compose sets <c>DOTNET_ENVIRONMENT:
+    /// Development</c> (honoured when <c>ASPNETCORE_ENVIRONMENT</c> is unset, and it is), so the
+    /// demo stack served the FULL STACK TRACE, not the bare 500. The bare 500 leaks nothing but is
+    /// no more deliberate — GL-105 already gives an API client a
     /// clean 405 for this exact shape of request, and a browser deserves the same one, in every
     /// environment. Short-circuiting here, ahead of <c>MapGraphQL()</c> and independent of the
     /// Accept header entirely, is what gets there without depending on which internal branch
