@@ -61,7 +61,7 @@
     <PackageReference Include="Identity.Contracts" Version="[0.1.0]" />
     <!-- GL-23: the Gateway's read model is built from GiftLists' own integration events —
          CONVENTIONS.md "Project reference graph" permits Infrastructure to reference another service's *.Contracts. -->
-    <PackageReference Include="GiftLists.Contracts" Version="[0.1.0]" />
+    <PackageReference Include="GiftLists.Contracts" Version="[0.2.0]" />
     <!-- GL-38: the reservation projection is built from Reservations' GiftReservedV1 (0.2.0 is
          the first version that carries it — 0.1.0 was the empty package GL-25 shipped). Same
          rule as above: another service's *.Contracts, Infrastructure only, and the contract type
