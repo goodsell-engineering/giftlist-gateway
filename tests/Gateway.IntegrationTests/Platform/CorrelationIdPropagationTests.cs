@@ -59,8 +59,6 @@ public sealed class CorrelationIdPropagationTests(GatewayFixture gateway) : IAsy
             { CorrelationIdMiddleware.HeaderName, correlationId },
         };
 
-        var logsBeforeEvent = gateway.Logs.Entries.Count;
-
         // Act 1 — the gRPC call, carrying the caller's id.
         var response = await gateway.GiftListsClient.CreateGiftListAsync(request, headers).ResponseAsync;
         var listId = Guid.Parse(response.ListId);
@@ -72,6 +70,14 @@ public sealed class CorrelationIdPropagationTests(GatewayFixture gateway) : IAsy
             found => found is not null,
             WaitTimeout);
         Assert.Equal(correlationId, sentCorrelationId);
+
+        // Captured here, immediately before Act 2 — not before Act 1 — so Assert 2 below can only
+        // be satisfied by a log line written while handling the EVENT. CorrelationIdMiddleware
+        // itself logs an Information line carrying this same id during Act 1 (GatewayFixture makes
+        // LogCapture the host's only provider, so that line is already in Entries by this point);
+        // taking the count before Act 1 instead made Assert 2 pass on that line alone; it would
+        // still be green with CorrelationIdIncomingStep's own log line deleted outright.
+        var logsBeforeEvent = gateway.Logs.Entries.Count;
 
         // Act 2 — simulates GiftLists (not run here) having processed that command and published
         // GiftListCreatedV1 with the SAME header CorrelationIdOutgoingStep would have carried
@@ -104,6 +110,51 @@ public sealed class CorrelationIdPropagationTests(GatewayFixture gateway) : IAsy
     }
 
     /// <summary>
+    /// GL-45 batch review (S2): a value with a character outside
+    /// <c>CorrelationIdMiddleware</c>'s <c>[A-Za-z0-9._-]</c> class is replaced with a fresh id,
+    /// never reflected back onto the response as-is — see that type's own
+    /// <c>WellFormedCorrelationIdPattern</c> remarks for why an unvalidated caller-chosen value
+    /// spanning the anonymous flow would otherwise be exactly the cross-request handle
+    /// ARCHITECTURE.md "Reservation privacy" disqualifies.
+    /// </summary>
+    [Fact]
+    public async Task GraphQlRequest_ShouldReplaceTheCorrelationId_WhenTheCallerSuppliedValueHasAnIllegalCharacter()
+    {
+        // Arrange — spaces, a comma and punctuation are all outside [A-Za-z0-9._-].
+        var malformed = "has spaces, commas, and $ymbols!";
+
+        // Act
+        var echoed = await SendWithCorrelationIdHeaderAsync(malformed);
+
+        // Assert — replaced, not reflected: the malformed value never comes back, and what does
+        // come back is itself well-formed (the GUID CorrelationIdMiddleware falls back to).
+        Assert.NotNull(echoed);
+        Assert.NotEqual(malformed, echoed);
+        Assert.True(Guid.TryParse(echoed, out _));
+    }
+
+    /// <summary>
+    /// GL-45 batch review (S2): Kestrel caps a request header at ~32 KB, but nothing capped this
+    /// one before — see <c>CorrelationIdMiddleware.WellFormedCorrelationIdPattern</c>'s own
+    /// remarks for the amplification that let an anonymous caller stamp a value that size onto
+    /// every message the request sends and every downstream log line naming it.
+    /// </summary>
+    [Fact]
+    public async Task GraphQlRequest_ShouldReplaceTheCorrelationId_WhenTheCallerSuppliedValueIsTooLong()
+    {
+        // Arrange — 129 characters of otherwise-legal charset, one past the 128-character cap.
+        var tooLong = new string('a', 129);
+
+        // Act
+        var echoed = await SendWithCorrelationIdHeaderAsync(tooLong);
+
+        // Assert — replaced, not reflected.
+        Assert.NotNull(echoed);
+        Assert.NotEqual(tooLong, echoed);
+        Assert.True(Guid.TryParse(echoed, out _));
+    }
+
+    /// <summary>
     /// Bypasses <see cref="GraphQlClient"/> deliberately — that helper only ever returns the
     /// parsed body, and this test also needs the raw response headers to assert
     /// <see cref="CorrelationIdMiddleware"/>'s echo.
@@ -126,5 +177,29 @@ public sealed class CorrelationIdPropagationTests(GatewayFixture gateway) : IAsy
         var body = await httpResponse.Content.ReadFromJsonAsync<JsonDocument>()
             ?? throw new InvalidOperationException("The GraphQL endpoint returned an empty body.");
         return (body.RootElement.GetProperty("data").GetProperty("myGiftLists"), echoed);
+    }
+
+    /// <summary>
+    /// No <c>Authorization</c> header — irrelevant to what these two tests check.
+    /// <see cref="CorrelationIdMiddleware"/> runs, and queues its response header write, ahead of
+    /// authentication and the resolver either way, so the echo is observable regardless of what
+    /// the (here, unauthenticated) GraphQL request itself resolves to.
+    /// <c>TryAddWithoutValidation</c> rather than <c>Headers.Add</c>: a malformed value is the
+    /// whole point of these two tests, and <see cref="HttpRequestMessage.Headers"/>'s own
+    /// validation would reject some of them client-side before the request even reached the
+    /// Gateway.
+    /// </summary>
+    private async Task<string?> SendWithCorrelationIdHeaderAsync(string correlationId)
+    {
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/graphql")
+        {
+            Content = JsonContent.Create(new { query = GiftListGraphQlQueries.MyGiftLists }),
+        };
+        httpRequest.Headers.TryAddWithoutValidation(CorrelationIdMiddleware.HeaderName, correlationId);
+
+        using var httpResponse = await gateway.GraphQlHttpClient.SendAsync(httpRequest);
+        return httpResponse.Headers.TryGetValues(CorrelationIdMiddleware.HeaderName, out var values)
+            ? values.SingleOrDefault()
+            : null;
     }
 }

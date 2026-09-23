@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using BuildingBlocks.Messaging.CorrelationId;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -31,17 +32,38 @@ namespace Gateway.Infrastructure.Platform;
 /// list it or a browser cannot read the echoed response header) and
 /// <c>Gateway.IntegrationTests</c> (asserting the same id actually round-trips end to end).
 /// </summary>
-public sealed class CorrelationIdMiddleware(RequestDelegate next)
+public sealed partial class CorrelationIdMiddleware(RequestDelegate next)
 {
     /// <summary>
-    /// A caller-supplied value under this header is honoured as-is (so an operator or another
-    /// service fronting this Gateway can hand it a correlation id to continue); otherwise one is
-    /// generated. <c>X-Correlation-Id</c> is the conventional choice, and the Gateway's own CORS
-    /// policy (<c>Program.cs</c>) already allows any request header (<c>AllowAnyHeader()</c>), so
-    /// no CORS change was needed to let a browser caller send it — only to let one read the
+    /// A caller-supplied value under this header is honoured — clamped through
+    /// <see cref="IsWellFormed"/> first, see that member's own remarks — rather than generated
+    /// fresh (so an operator or another service fronting this Gateway can hand it a correlation
+    /// id to continue). <c>X-Correlation-Id</c> is the conventional choice, and the Gateway's own
+    /// CORS policy (<c>Program.cs</c>) already allows any request header (<c>AllowAnyHeader()</c>),
+    /// so no CORS change was needed to let a browser caller send it — only to let one read the
     /// echoed response header back, which is the one thing <c>WithExposedHeaders</c> had to grow.
     /// </summary>
     public const string HeaderName = "X-Correlation-Id";
+
+    /// <summary>
+    /// GL-45 batch review (S2): a caller-supplied value is echoed on the response, interpolated
+    /// into every log line for the request, and stamped onto the Rebus header of every message
+    /// the request sends — landing on RabbitMQ and re-logged by every downstream
+    /// <c>CorrelationIdIncomingStep</c>. Honouring it unvalidated let an anonymous caller (the
+    /// guest reserve flow has none of GL-44's rate limiting past its own per-IP window) pick a
+    /// value bounded only by Kestrel's ~32 KB request-header cap and amplify it across every
+    /// message the request produces. It also matters beyond size: a caller-chosen, caller-stable
+    /// token spanning the anonymous reserve flow is exactly the class of cross-request handle
+    /// ARCHITECTURE.md "Reservation privacy" disqualifies, the moment anything downstream (a
+    /// future SPA session id, say) starts setting it consistently per caller rather than per
+    /// request — nothing does today (the SPA sends no correlation id in this batch), which is why
+    /// this is a should-fix rather than blocking, not why it's safe to skip. A value failing this
+    /// check is treated exactly like a missing one: replaced with a fresh id, never rejected —
+    /// this header is a tracing aid, not a caller-authenticated credential, so there is nothing to
+    /// error out over.
+    /// </summary>
+    [GeneratedRegex(@"\A[A-Za-z0-9._-]{1,128}\z", RegexOptions.CultureInvariant)]
+    private static partial Regex WellFormedCorrelationIdPattern();
 
     public async Task InvokeAsync(
         HttpContext context,
@@ -78,9 +100,12 @@ public sealed class CorrelationIdMiddleware(RequestDelegate next)
     }
 
     private static string ResolveCorrelationId(HttpContext context) =>
-        context.Request.Headers.TryGetValue(HeaderName, out var value) && !string.IsNullOrWhiteSpace(value)
+        context.Request.Headers.TryGetValue(HeaderName, out var value) && IsWellFormed(value.ToString())
             ? value.ToString()
             : Guid.NewGuid().ToString();
+
+    /// <summary>See <see cref="WellFormedCorrelationIdPattern"/>'s own remarks for why this exists at all and why a failure means "replace", not "reject". Multiple header values collapse to a single comma-joined string here (<see cref="Microsoft.Extensions.Primitives.StringValues.ToString()"/>), which the character class below rejects outright rather than accepting a spliced value from two unrelated headers.</summary>
+    private static bool IsWellFormed(string value) => WellFormedCorrelationIdPattern().IsMatch(value);
 }
 
 /// <summary>Hides <see cref="IApplicationBuilder.UseMiddleware{TMiddleware}"/>'s type-argument spelling from <c>Gateway.Host</c>'s <c>Program.cs</c> — mirrors <c>GatewayGraphQlEndpointRouteBuilderExtensions.UseGatewayGraphQlGetQueryGuard</c>'s own shape.</summary>
