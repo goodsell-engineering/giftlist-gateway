@@ -46,7 +46,7 @@
          is built from — CONVENTIONS.md "Testing" (assert on contracts published to the real broker, and
          a test project may reach for a service's Contracts freely; ACL is an Infrastructure-only
          rule). -->
-    <PackageReference Include="GiftLists.Contracts" Version="[0.1.0]" />
+    <PackageReference Include="GiftLists.Contracts" Version="[0.2.0]" />
     <!-- GL-38: publishes the real Reservations.Contracts.Reservations.Events.GiftReservedV1 the
          reservation projection is built from — same reasoning as GiftLists.Contracts above. -->
     <PackageReference Include="Reservations.Contracts" Version="[0.2.0]" />

@@ -7,6 +7,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Rebus.Config;
 using Rebus.Handlers;
+using Rebus.Messages;
+using Rebus.Pipeline;
 
 namespace Gateway.IntegrationTests.Support;
 
@@ -65,6 +67,11 @@ internal sealed class GiftListsCommandListener : IAsyncDisposable
         public Task Handle(CreateGiftList message)
         {
             sink.Record(message);
+            // GL-45: the real header this command arrived with, not merely what the sender
+            // claims to have set — see GiftListsCommandSink's own doc comment for why only this
+            // one command type needs it.
+            MessageContext.Current.Headers.TryGetValue(Headers.CorrelationId, out var correlationId);
+            sink.RecordCorrelationId(message.ListId, correlationId);
             return Task.CompletedTask;
         }
     }
