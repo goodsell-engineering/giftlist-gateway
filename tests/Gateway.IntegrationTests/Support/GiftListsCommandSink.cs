@@ -24,6 +24,15 @@ public sealed class GiftListsCommandSink
     private readonly ConcurrentQueue<AddGiftItem> _addGiftItems = new();
     private readonly ConcurrentQueue<RemoveGiftItem> _removeGiftItems = new();
 
+    /// <summary>
+    /// GL-45: the <c>rbs2-corr-id</c> header actually delivered on the wire with each
+    /// <see cref="CreateGiftList"/> command, keyed by the list id the caller chose — CreateGiftList
+    /// is the one command CorrelationIdPropagationTests exercises, so no other command type needs
+    /// this (see that test's own remarks). A real header, read off <c>MessageContext.Current</c>
+    /// by the handler below, not merely "did GiftListsGrpcService believe it sent one".
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, string?> _correlationIdsByCreatedListId = new();
+
     public IReadOnlyCollection<CreateGiftList> CreateGiftLists => _createGiftLists;
 
     public IReadOnlyCollection<RenameGiftList> RenameGiftLists => _renameGiftLists;
@@ -43,4 +52,12 @@ public sealed class GiftListsCommandSink
     public void Record(AddGiftItem message) => _addGiftItems.Enqueue(message);
 
     public void Record(RemoveGiftItem message) => _removeGiftItems.Enqueue(message);
+
+    /// <summary>See <see cref="_correlationIdsByCreatedListId"/>'s own doc comment.</summary>
+    public void RecordCorrelationId(Guid listId, string? correlationId) =>
+        _correlationIdsByCreatedListId[listId] = correlationId;
+
+    /// <summary>See <see cref="_correlationIdsByCreatedListId"/>'s own doc comment. <see langword="null"/> until the command for <paramref name="listId"/> has actually arrived.</summary>
+    public string? CorrelationIdForCreatedList(Guid listId) =>
+        _correlationIdsByCreatedListId.GetValueOrDefault(listId);
 }

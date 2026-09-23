@@ -1,4 +1,5 @@
 using BuildingBlocks.HealthChecks;
+using BuildingBlocks.Logging;
 using BuildingBlocks.Messaging;
 using BuildingBlocks.Persistence;
 using Gateway.Infrastructure.Platform;
@@ -6,6 +7,12 @@ using Gateway.Infrastructure.Platform.Transport;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// GL-45: scope rendering for the console provider WebApplication.CreateBuilder already
+// registers — without this, CorrelationIdMiddleware/CorrelationIdIncomingStep's own scope
+// pushes correctly but silently, since Microsoft.Extensions.Logging's simple console formatter
+// defaults IncludeScopes to false.
+builder.Services.AddBuildingBlocksLogging();
 
 // The Gateway's own read-model database and its Rebus input queue, used for command sends and
 // the request/reply pattern (ARCHITECTURE.md "Command → event flow", "Data model", "Tech stack") — wiring these here, ahead of any
@@ -37,14 +44,25 @@ builder.Services.AddCors(options =>
         // ErrorCodeTrailerName is the one Gateway-specific addition (GL-18 review): without it
         // exposed too, the browser gets the gRPC status but never the Error.Code trailer that
         // distinguishes e.g. "still processing" from "genuinely unavailable".
+        // GL-45: AllowAnyHeader() above already lets a caller SEND X-Correlation-Id (it covers
+        // every request header, this one included); WithExposedHeaders is the separate, narrower
+        // list of response headers a browser's JS is allowed to READ, which is why the id echoed
+        // back by CorrelationIdMiddleware needs its own entry here the same way the grpc-web
+        // trailers below already do.
         .WithExposedHeaders(
             "Grpc-Status", "Grpc-Message", "Grpc-Encoding", "Grpc-Accept-Encoding",
-            ErrorToRpcExceptionMapper.ErrorCodeTrailerName));
+            ErrorToRpcExceptionMapper.ErrorCodeTrailerName,
+            CorrelationIdMiddleware.HeaderName));
 });
 
 var app = builder.Build();
 
 app.UseCors(GatewayCorsPolicy);
+
+// GL-45: ahead of authentication/rate limiting/grpc-web/GraphQL so the correlation id is live —
+// and, via ICorrelationIdAccessor, already stampable onto a Rebus Send — for every one of those
+// later stages, and so any of THEIR OWN log lines fall inside the same logger scope too.
+app.UseGatewayCorrelationId();
 
 // GL-23: populates HttpContext.User from the SPA's JWT (if any) ahead of every request,
 // including GraphQL's — myGiftLists/giftList(id) read the caller's id off it
