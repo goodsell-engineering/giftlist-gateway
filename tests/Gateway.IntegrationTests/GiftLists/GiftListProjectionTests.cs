@@ -602,10 +602,14 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
     [Fact]
     public async Task GiftItemDescriptionChangedV1_ShouldStayInvisibleThenMaterialiseOnceWithTheEdit_WhenItArrivesBeforeTheAdd()
     {
-        // Arrange
+        // Arrange — the add's own timestamp is chronologically EARLIER than the edit's (the item
+        // has to exist before it can be edited), but the two messages are delivered in reverse
+        // order (GL-64): the description change arrives at this Gateway before its own item's add
+        // does.
         var (listId, ownerId) = await CreateListAsync();
         var itemId = Guid.NewGuid();
-        var changedAt = DateTimeOffset.UtcNow;
+        var addedAt = DateTimeOffset.UtcNow;
+        var changedAt = addedAt.AddSeconds(1);
 
         // Act — the change arrives first, for an item the projection has never heard of
         await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(listId, itemId, "Pre-add edit", changedAt));
@@ -615,9 +619,8 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
         var beforeAdd = await QueryGiftListAsync(listId, ownerId);
         Assert.Empty(beforeAdd!.Value.GetProperty("items").EnumerateArray());
 
-        // Act — the real add finally arrives, chronologically after the change
-        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(
-            listId, itemId, "Lego Set", "Original", null, changedAt.AddSeconds(1)));
+        // Act — the real add finally arrives, carrying its own, earlier timestamp
+        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(listId, itemId, "Lego Set", "Original", null, addedAt));
 
         // Assert — materialises once, with the edit already applied, not the add's own description
         var afterAdd = await WaitForGiftListAsync(listId, ownerId, r => r.GetProperty("items").GetArrayLength() > 0);
