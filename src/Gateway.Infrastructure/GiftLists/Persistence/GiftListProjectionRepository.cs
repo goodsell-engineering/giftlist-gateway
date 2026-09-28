@@ -1,6 +1,7 @@
 using BuildingBlocks.Persistence;
 using Gateway.Application.GiftLists;
 using Gateway.Application.GiftLists.RecordGiftItemAdded;
+using Gateway.Application.GiftLists.RecordGiftItemDescriptionChanged;
 using Gateway.Application.GiftLists.RecordGiftItemRemoved;
 using Gateway.Application.GiftLists.RecordGiftListCreated;
 using Gateway.Application.GiftLists.RecordGiftListDeleted;
@@ -105,6 +106,9 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
 
     public Task ApplyItemRemovedAsync(RecordGiftItemRemovedRequest request, CancellationToken cancellationToken) =>
         ApplyAsync(request.ListId, existing => MutateOnItemRemoved(existing, request), cancellationToken);
+
+    public Task ApplyItemDescriptionChangedAsync(RecordGiftItemDescriptionChangedRequest request, CancellationToken cancellationToken) =>
+        ApplyAsync(request.ListId, existing => MutateOnItemDescriptionChanged(existing, request), cancellationToken);
 
     /// <summary>
     /// The <c>ownerId</c> and <c>shareToken</c> indexes <c>myGiftLists</c>/<see cref="FindByShareTokenAsync"/>
@@ -392,6 +396,22 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
         return changed ? (WithItems(baseline, items), true) : (baseline, false);
     }
 
+    /// <summary>
+    /// GL-137: applies to the embedded item the same way <see cref="MutateOnItemAdded"/>/
+    /// <see cref="MutateOnItemRemoved"/> do — including when the list itself is only a stub, or
+    /// already deleted; either way the change stays invisible until reads' own
+    /// <c>HasCreated &amp;&amp; !IsDeleted</c> filter admits the list.
+    /// </summary>
+    private static (GiftListProjectionDocument, bool) MutateOnItemDescriptionChanged(
+        GiftListProjectionDocument? existing, RecordGiftItemDescriptionChangedRequest request)
+    {
+        var baseline = existing ?? Stub(request.ListId);
+        var (items, changed) = UpsertOnDescriptionChanged(
+            baseline.Items, request.ItemId, ProjectionInstants.ToStoredPrecision(request.ChangedAt), request.Description);
+
+        return changed ? (WithItems(baseline, items), true) : (baseline, false);
+    }
+
     private static GiftListProjectionDocument WithItems(
         GiftListProjectionDocument baseline, List<GiftItemProjectionDocument> items) => new()
     {
@@ -421,22 +441,47 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
         List<GiftItemProjectionDocument> items, Guid itemId, DateTime addedAt, string name, string? description, string? url)
     {
         var index = items.FindIndex(i => i.ItemId == itemId);
-        var candidate = new GiftItemProjectionDocument
-        {
-            ItemId = itemId,
-            Name = name,
-            Description = description,
-            Url = url,
-            IsRemoved = false,
-            UpdatedAt = addedAt,
-        };
 
         if (index < 0)
         {
+            var candidate = new GiftItemProjectionDocument
+            {
+                ItemId = itemId,
+                Name = name,
+                Description = description,
+                Url = url,
+                IsRemoved = false,
+                UpdatedAt = addedAt,
+                DescriptionUpdatedAt = null,
+                IsStub = false,
+            };
             return (new List<GiftItemProjectionDocument>(items) { candidate }, true);
         }
 
         var current = items[index];
+
+        // GL-137: a stub materialises here for the first time. Its own description change, if
+        // any, may be newer than this add — in which case it wins and the stub's own
+        // DescriptionUpdatedAt survives; otherwise the add's own description applies and
+        // DescriptionUpdatedAt is cleared, because it no longer predates the item.
+        if (current.IsStub)
+        {
+            var keepStubDescription = current.DescriptionUpdatedAt is { } stubChangedAt && stubChangedAt >= addedAt;
+            var filled = new GiftItemProjectionDocument
+            {
+                ItemId = itemId,
+                Name = name,
+                Description = keepStubDescription ? current.Description : description,
+                Url = url,
+                IsRemoved = false,
+                UpdatedAt = addedAt,
+                DescriptionUpdatedAt = keepStubDescription ? current.DescriptionUpdatedAt : null,
+                IsStub = false,
+            };
+            var filledReplaced = new List<GiftItemProjectionDocument>(items);
+            filledReplaced[index] = filled;
+            return (filledReplaced, true);
+        }
 
         // A TIE MUST GO TO THE TOMBSTONE, not just a strictly-later event. `>` alone let an add
         // sharing a remove's exact timestamp fall through and overwrite the tombstone, resurrecting
@@ -454,14 +499,33 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
             return (items, false); // a chronologically later event (most sharply, a remove) already applied
         }
 
+        // GL-137: a description change at least as new as this add already applied — the add
+        // must not resurrect the old description (TC-T2-14). Name/url/tombstone still follow
+        // today's rule; the description and its own instant are carried through unchanged, and
+        // the exact-redelivery check below then compares name and url only.
+        var ignoreAddDescription = current.DescriptionUpdatedAt is { } currentChangedAt && currentChangedAt >= addedAt;
+        var effectiveDescription = ignoreAddDescription ? current.Description : description;
+        var effectiveDescriptionUpdatedAt = ignoreAddDescription ? current.DescriptionUpdatedAt : null;
+
         if (current.UpdatedAt == addedAt && !current.IsRemoved &&
-            current.Name == name && current.Description == description && current.Url == url)
+            current.Name == name && current.Url == url &&
+            (ignoreAddDescription || current.Description == description))
         {
             return (items, false); // exact redelivery
         }
 
         var replaced = new List<GiftItemProjectionDocument>(items);
-        replaced[index] = candidate;
+        replaced[index] = new GiftItemProjectionDocument
+        {
+            ItemId = itemId,
+            Name = name,
+            Description = effectiveDescription,
+            Url = url,
+            IsRemoved = false,
+            UpdatedAt = addedAt,
+            DescriptionUpdatedAt = effectiveDescriptionUpdatedAt,
+            IsStub = false,
+        };
         return (replaced, true);
     }
 
@@ -485,6 +549,8 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
                 Url = null,
                 IsRemoved = true,
                 UpdatedAt = removedAt,
+                DescriptionUpdatedAt = null,
+                IsStub = false,
             };
             return (new List<GiftItemProjectionDocument>(items) { tombstone }, true);
         }
@@ -500,6 +566,10 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
             return (items, false); // exact redelivery
         }
 
+        // GL-137: carries the description and its own instant onto the tombstone rather than
+        // discarding them — ToProjection still filters IsRemoved out of every query response, so
+        // this is only ever visible in the raw document. A stub (never materialised by its own
+        // add) becomes an ordinary tombstone the same way — IsStub always clears to false here.
         var updated = new GiftItemProjectionDocument
         {
             ItemId = itemId,
@@ -508,6 +578,74 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
             Url = current.Url,
             IsRemoved = true,
             UpdatedAt = removedAt,
+            DescriptionUpdatedAt = current.DescriptionUpdatedAt,
+            IsStub = false,
+        };
+        var replaced = new List<GiftItemProjectionDocument>(items);
+        replaced[index] = updated;
+        return (replaced, true);
+    }
+
+    /// <summary>
+    /// GL-137: last-write-wins guarded by the item's own effective description instant
+    /// (<see cref="GiftItemProjectionDocument.DescriptionUpdatedAt"/> when set, else
+    /// <see cref="GiftItemProjectionDocument.UpdatedAt"/> — the add instant for a live item; see
+    /// <see cref="IGiftListProjectionRepository.ApplyItemDescriptionChangedAsync"/>'s own doc
+    /// comment). A change for an item this projection has not seen an add for yet is appended as
+    /// an invisible stub (<see cref="GiftItemProjectionDocument.IsStub"/>, <c>UpdatedAt =
+    /// DateTime.MinValue</c> so a later, older add is never mistaken for stale) rather than
+    /// dropped — mirrors <see cref="UpsertOnRemoved"/>'s own tombstone-for-an-unseen-item
+    /// reasoning. A tombstoned item never accepts a description change; the remove already
+    /// carried the description across in <see cref="UpsertOnRemoved"/>.
+    /// </summary>
+    private static (List<GiftItemProjectionDocument> Items, bool Changed) UpsertOnDescriptionChanged(
+        List<GiftItemProjectionDocument> items, Guid itemId, DateTime changedAt, string? description)
+    {
+        var index = items.FindIndex(i => i.ItemId == itemId);
+        if (index < 0)
+        {
+            var stub = new GiftItemProjectionDocument
+            {
+                ItemId = itemId,
+                Name = string.Empty,
+                Description = description,
+                Url = null,
+                IsRemoved = false,
+                UpdatedAt = DateTime.MinValue,
+                DescriptionUpdatedAt = changedAt,
+                IsStub = true,
+            };
+            return (new List<GiftItemProjectionDocument>(items) { stub }, true);
+        }
+
+        var current = items[index];
+        if (current.IsRemoved)
+        {
+            return (items, false); // the tombstone wins
+        }
+
+        if (current.DescriptionUpdatedAt is { } currentChangedAt)
+        {
+            if (changedAt <= currentChangedAt)
+            {
+                return (items, false); // redelivery, or a same-millisecond conflict where the first applied value is kept
+            }
+        }
+        else if (changedAt < current.UpdatedAt)
+        {
+            return (items, false); // predates the add
+        }
+
+        var updated = new GiftItemProjectionDocument
+        {
+            ItemId = itemId,
+            Name = current.Name,
+            Description = description,
+            Url = current.Url,
+            IsRemoved = false,
+            UpdatedAt = current.UpdatedAt,
+            DescriptionUpdatedAt = changedAt,
+            IsStub = current.IsStub,
         };
         var replaced = new List<GiftItemProjectionDocument>(items);
         replaced[index] = updated;

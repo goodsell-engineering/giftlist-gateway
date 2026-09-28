@@ -48,6 +48,7 @@ public static class GatewayMessageRouting
             .Map<DeleteGiftList>(GiftListsQueueName)
             .Map<AddGiftItem>(GiftListsQueueName)
             .Map<RemoveGiftItem>(GiftListsQueueName)
+            .Map<ChangeGiftItemDescription>(GiftListsQueueName)
             // GL-37: the reservation grpc-web surface's one request/reply command.
             .Map<ReserveGift>(ReservationsQueueName));
 }

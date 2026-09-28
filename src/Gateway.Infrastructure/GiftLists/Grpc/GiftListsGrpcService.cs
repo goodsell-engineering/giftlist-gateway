@@ -103,6 +103,19 @@ internal sealed class GiftListsGrpcService(IBus bus) : GiftListsService.GiftList
         return new RemoveGiftItemResponse();
     }
 
+    public override async Task<ChangeGiftItemDescriptionResponse> ChangeGiftItemDescription(ChangeGiftItemDescriptionRequest request, ServerCallContext context)
+    {
+        var requesterId = context.RequireUserId();
+        var command = new ChangeGiftItemDescription(
+            ParseId(request.ListId),
+            requesterId,
+            ParseId(request.ItemId),
+            request.HasDescription ? request.Description : null);
+        await bus.Send(command);
+
+        return new ChangeGiftItemDescriptionResponse();
+    }
+
     /// <summary>
     /// <see cref="Guid.Parse(string)"/> throws a bare, unmapped <see cref="FormatException"/> on
     /// an empty or malformed id — this turns that into the same <c>gateway.invalid_id</c> /
