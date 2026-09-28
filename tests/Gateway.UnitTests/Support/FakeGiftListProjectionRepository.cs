@@ -1,5 +1,6 @@
 using Gateway.Application.GiftLists;
 using Gateway.Application.GiftLists.RecordGiftItemAdded;
+using Gateway.Application.GiftLists.RecordGiftItemDescriptionChanged;
 using Gateway.Application.GiftLists.RecordGiftItemRemoved;
 using Gateway.Application.GiftLists.RecordGiftListCreated;
 using Gateway.Application.GiftLists.RecordGiftListDeleted;
@@ -42,5 +43,8 @@ internal sealed class FakeGiftListProjectionRepository : IGiftListProjectionRepo
         throw new NotSupportedException("Read-side fake.");
 
     public Task ApplyItemRemovedAsync(RecordGiftItemRemovedRequest request, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Read-side fake.");
+
+    public Task ApplyItemDescriptionChangedAsync(RecordGiftItemDescriptionChangedRequest request, CancellationToken cancellationToken) =>
         throw new NotSupportedException("Read-side fake.");
 }

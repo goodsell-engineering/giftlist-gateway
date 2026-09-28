@@ -50,6 +50,7 @@ internal sealed class GiftListsCommandListener : IAsyncDisposable
         builder.Services.AddRebusHandler<RecordDeleteGiftListHandler>();
         builder.Services.AddRebusHandler<RecordAddGiftItemHandler>();
         builder.Services.AddRebusHandler<RecordRemoveGiftItemHandler>();
+        builder.Services.AddRebusHandler<RecordChangeGiftItemDescriptionHandler>();
 
         var host = builder.Build();
         await host.StartAsync();
@@ -106,6 +107,15 @@ internal sealed class GiftListsCommandListener : IAsyncDisposable
     private sealed class RecordRemoveGiftItemHandler(GiftListsCommandSink sink) : IHandleMessages<RemoveGiftItem>
     {
         public Task Handle(RemoveGiftItem message)
+        {
+            sink.Record(message);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordChangeGiftItemDescriptionHandler(GiftListsCommandSink sink) : IHandleMessages<ChangeGiftItemDescription>
+    {
+        public Task Handle(ChangeGiftItemDescription message)
         {
             sink.Record(message);
             return Task.CompletedTask;
