@@ -629,7 +629,15 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
         Assert.Equal("Pre-add edit", item.GetProperty("description").GetString());
     }
 
-    /// <summary>TC-T2-16: a description change for an already-removed item must not resurrect it — the tombstone wins.</summary>
+    /// <summary>
+    /// TC-T2-16: a description change for an already-removed item must not resurrect it — the
+    /// tombstone wins. Here the change's own timestamp is chronologically AFTER the remove's
+    /// (t1 add &lt; t2 remove &lt; t3 change): the generic "older than what's stored" staleness
+    /// guard in <c>UpsertOnDescriptionChanged</c> would let this one through on timestamp alone,
+    /// so this is the one case that pins the explicit <c>IsRemoved</c> check specifically —
+    /// mutation-tested: removing that check alone (leaving the timestamp guard in place) makes
+    /// this test fail.
+    /// </summary>
     [Fact]
     public async Task GiftItemDescriptionChangedV1_ShouldNotResurrectTheItem_WhenItArrivesAfterTheRemove()
     {
@@ -641,10 +649,47 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
         await gateway.GiftListsBus.Publish(new GiftItemRemovedV1(listId, itemId, DateTimeOffset.UtcNow.AddSeconds(1)));
         await WaitForRawItemStateAsync(listId, itemId, isRemoved: true);
 
-        // Act — a description change arrives after the remove
+        // Act — a description change arrives after the remove, with a later timestamp too
         var probeBaseline = gateway.EventProbe.CountFor<GiftItemDescriptionChangedV1>();
         await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(
             listId, itemId, "Too late", DateTimeOffset.UtcNow.AddSeconds(2)));
+        await Eventually.Async(
+            () => Task.FromResult(gateway.EventProbe.CountFor<GiftItemDescriptionChangedV1>()),
+            count => count > probeBaseline,
+            WaitTimeout);
+
+        // Assert — still gone, not resurrected
+        var response = await QueryGiftListAsync(listId, ownerId);
+        Assert.Empty(response!.Value.GetProperty("items").EnumerateArray());
+    }
+
+    /// <summary>
+    /// TC-T2-16, the realistic ordering: t1 (add) &lt; t2 (change) &lt; t3 (remove) — the owner
+    /// edits, then removes, so the change's own timestamp predates the remove's — but the change's
+    /// message is the one that arrives late (GL-64 reordering), after the remove has already been
+    /// applied. Also must not resurrect the item. This case happens to be caught by the general
+    /// staleness guard as well as by <c>IsRemoved</c> (t2 &lt; t3, so <c>changedAt &lt;
+    /// current.UpdatedAt</c> already rejects it), so it is not the mutation-distinguishing case —
+    /// the test above is — but it is the ordering an owner's edit-then-delete would actually
+    /// produce, so it is worth pinning in its own right.
+    /// </summary>
+    [Fact]
+    public async Task GiftItemDescriptionChangedV1_ShouldNotResurrectTheItem_WhenTheChangePredatesTheRemoveButArrivesAfterIt()
+    {
+        // Arrange
+        var (listId, ownerId) = await CreateListAsync();
+        var itemId = Guid.NewGuid();
+        var addedAt = DateTimeOffset.UtcNow;
+        var changedAt = addedAt.AddSeconds(1);
+        var removedAt = addedAt.AddSeconds(2);
+        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(listId, itemId, "Lego Set", "Original", null, addedAt));
+        await WaitForGiftListAsync(listId, ownerId, r => r.GetProperty("items").GetArrayLength() > 0);
+        await gateway.GiftListsBus.Publish(new GiftItemRemovedV1(listId, itemId, removedAt));
+        await WaitForRawItemStateAsync(listId, itemId, isRemoved: true);
+
+        // Act — the change arrives only now, carrying its own earlier timestamp
+        var probeBaseline = gateway.EventProbe.CountFor<GiftItemDescriptionChangedV1>();
+        await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(listId, itemId, "Too late", changedAt));
         await Eventually.Async(
             () => Task.FromResult(gateway.EventProbe.CountFor<GiftItemDescriptionChangedV1>()),
             count => count > probeBaseline,
