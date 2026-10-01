@@ -700,6 +700,57 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
         Assert.Empty(response!.Value.GetProperty("items").EnumerateArray());
     }
 
+    /// <summary>
+    /// TC-T2-26 (adopted from TC-GL-137-P05, coverage review's "Proposed cases"): the one path where a stub
+    /// becomes a tombstone, rather than materialising through <c>UpsertOnAdded</c>'s own
+    /// stub-aware branch. A description change for an item this projection has never seen an add
+    /// for creates an invisible <c>IsStub</c> row (TC-T2-15); a remove for that same item must
+    /// turn it into an ordinary tombstone with <c>IsStub</c> cleared (<c>UpsertOnRemoved</c>'s own
+    /// doc comment: "<c>IsStub</c> always clears to false here"). The late add that finally
+    /// arrives, carrying the earliest of the three timestamps, then has to lose to that tombstone
+    /// through the ordinary tie-to-tombstone rule in <c>UpsertOnAdded</c> — which only runs that
+    /// rule because it first checks <c>IsStub</c> and finds it already false. If
+    /// <c>UpsertOnRemoved</c> instead carried the stub's own <c>IsStub</c> through onto the
+    /// tombstone, this add would be routed into the stub-materialising branch instead and
+    /// resurrect the item.
+    /// </summary>
+    [Fact]
+    public async Task GiftItemAddedV1_ShouldNotResurrectTheItem_WhenItArrivesAfterADescriptionChangeAndARemove()
+    {
+        // Arrange
+        var (listId, ownerId) = await CreateListAsync();
+        var itemId = Guid.NewGuid();
+        var t1 = DateTimeOffset.UtcNow;
+        var t2 = t1.AddSeconds(1);
+        var t3 = t1.AddSeconds(2);
+        await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(listId, itemId, "Edited", t2));
+        await WaitForRawItemStateAsync(listId, itemId, isRemoved: false);
+        await gateway.GiftListsBus.Publish(new GiftItemRemovedV1(listId, itemId, t3));
+        await WaitForRawItemStateAsync(listId, itemId, isRemoved: true);
+
+        // Act — the add arrives last, carrying the earliest of the three timestamps
+        var probeBaseline = gateway.EventProbe.CountFor<GiftItemAddedV1>();
+        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(listId, itemId, "Lego Set", "Original", null, t1));
+        await Eventually.Async(
+            () => Task.FromResult(gateway.EventProbe.CountFor<GiftItemAddedV1>()),
+            count => count > probeBaseline,
+            WaitTimeout);
+
+        // Assert — invisible through the public surface, same as every other tombstone
+        var response = await QueryGiftListAsync(listId, ownerId);
+        Assert.Empty(response!.Value.GetProperty("items").EnumerateArray());
+
+        // Assert — and the raw tombstone itself: still removed, not a stub, stamped with the remove's own instant
+        var document = await gateway.Database
+            .GetCollection<BsonDocument>(GatewayFixture.GiftListProjectionsCollectionName)
+            .Find(Builders<BsonDocument>.Filter.Eq("_id", listId))
+            .FirstOrDefaultAsync();
+        var item = document!["items"].AsBsonArray.Select(i => i.AsBsonDocument).Single(i => i["itemId"].AsGuid == itemId);
+        Assert.True(item["isRemoved"].AsBoolean);
+        Assert.False(item["isStub"].AsBoolean);
+        Assert.Equal(t3.UtcDateTime, item["updatedAt"].ToUniversalTime(), TimeSpan.FromMilliseconds(1));
+    }
+
     /// <summary>TC-T2-17: an older description change arriving after a newer one already applied is ignored.</summary>
     [Fact]
     public async Task GiftItemDescriptionChangedV1_ShouldBeIgnored_WhenOlderThanTheAppliedChange()
