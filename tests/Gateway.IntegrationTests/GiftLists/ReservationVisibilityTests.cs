@@ -1,7 +1,9 @@
 using System.Text.Json;
+using Gateway.Infrastructure.GiftLists.Grpc;
 using Gateway.IntegrationTests.Fixtures;
 using Gateway.IntegrationTests.Support;
 using GiftLists.Contracts.GiftLists.Events;
+using Grpc.Core;
 using Reservations.Contracts.Reservations.Events;
 
 namespace Gateway.IntegrationTests.GiftLists;
@@ -141,6 +143,46 @@ public sealed class ReservationVisibilityTests(GatewayFixture gateway) : IAsyncL
 
         // Assert
         Assert.Equal(before.GetRawText(), after.GetRawText());
+    }
+
+    /// <summary>
+    /// TC-T2-21: the whole owner-edit flow — the RPC, the projection update through
+    /// <c>GiftItemDescriptionChangedV1Handler</c>, and the owner's own confirming
+    /// <c>giftList(id)</c> query — reads the reservation projection <em>zero</em> times, even
+    /// though the list has a reserved item. <c>ViewGiftListInteractor</c>'s own doc comment
+    /// already says the owner branch never calls the port at all; this proves it end to end
+    /// through <see cref="CountingReservationProjectionRepository"/>, not merely by reading that
+    /// comment.
+    /// </summary>
+    [Fact]
+    public async Task ChangeGiftItemDescription_ShouldNotReadTheReservationProjection_WhenTheOwnerEditsThenConfirmsViaGiftList()
+    {
+        // Arrange — a list with a reserved item
+        var listId = Guid.NewGuid();
+        var ownerId = Guid.NewGuid();
+        var itemId = Guid.NewGuid();
+        var shareToken = ShareTokens.New();
+        await PublishListAsync(listId, ownerId, shareToken, itemId);
+        await gateway.ReservationsBus.Publish(new GiftReservedV1(listId, itemId, DateTimeOffset.UtcNow));
+        var accessToken = TestTokenIssuer.IssueAccessToken(ownerId);
+        await WaitForOwnerListAsync(listId, accessToken, list => list.GetProperty("items").GetArrayLength() == 1);
+        var callsBefore = gateway.ReservationProjectionCalls.FindByListCallCount;
+
+        // Act — the owner edits the description via the real RPC, then confirms via giftList(id)
+        var request = new ChangeGiftItemDescriptionRequest
+        {
+            ListId = listId.ToString(),
+            ItemId = itemId.ToString(),
+            Description = "Edited",
+        };
+        await gateway.GiftListsClient.ChangeGiftItemDescriptionAsync(
+            request, new Metadata { { "authorization", $"Bearer {accessToken}" } }).ResponseAsync;
+        await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(listId, itemId, "Edited", DateTimeOffset.UtcNow.AddSeconds(1)));
+        await WaitForOwnerListAsync(
+            listId, accessToken, list => list.GetProperty("items").EnumerateArray().Single().GetProperty("description").GetString() == "Edited");
+
+        // Assert — no call to IReservationProjectionRepository.FindByListAsync happened for any of it
+        Assert.Equal(callsBefore, gateway.ReservationProjectionCalls.FindByListCallCount);
     }
 
     private async Task PublishListAsync(Guid listId, Guid ownerId, string shareToken, Guid itemId)

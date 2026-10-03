@@ -38,4 +38,22 @@ public sealed class GiftItemProjectionDocument
     /// comment (both services share the same reasoning: always UTC already, so nothing is lost).
     /// </summary>
     public required DateTime UpdatedAt { get; init; }
+
+    /// <summary>
+    /// The last-write-wins guard for a description change specifically (GL-137) — compared
+    /// against an incoming <c>GiftItemDescriptionChangedV1.ChangedAt</c> the same way
+    /// <see cref="UpdatedAt"/> guards add/remove. Absent (null) means the description dates from
+    /// the item's add, so no migration is needed for existing documents.
+    /// </summary>
+    public DateTime? DescriptionUpdatedAt { get; init; }
+
+    /// <summary>
+    /// GL-137: true only for a stub appended when a description change arrives before its item's
+    /// add — never <c>required</c>, and inverted (rather than a natural <c>HasAdded</c>/
+    /// <c>HasCreated</c>) so an absent value on every pre-GL-137 document reads as <c>false</c>,
+    /// keeping every existing item visible with no migration (plan Risk R3). Reads filter this
+    /// out the same way they filter <see cref="IsRemoved"/> — see
+    /// <see cref="GiftListProjectionDocumentMapper.ToProjection"/>.
+    /// </summary>
+    public bool IsStub { get; init; }
 }

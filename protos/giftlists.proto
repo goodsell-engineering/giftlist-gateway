@@ -8,8 +8,9 @@ option csharp_namespace = "Gateway.Infrastructure.GiftLists.Grpc";
 
 // GL-71: the browser's grpc-web entry point for the GiftLists command surface. One RPC per
 // command in GiftLists.Contracts.GiftLists (CreateGiftList/RenameGiftList/DeleteGiftList/
-// AddGiftItem/RemoveGiftItem), so the two evolve independently — mirrors identity.proto's own
-// rationale exactly (GL-18 is the precedent this file follows).
+// AddGiftItem/RemoveGiftItem/ChangeGiftItemDescription — six, since GL-137), so the two evolve
+// independently — mirrors identity.proto's own rationale exactly (GL-18 is the precedent this
+// file follows).
 //
 // Every RPC here is fire-and-forget, the same as the Rebus command it wraps (ARCHITECTURE.md
 // "Command → event flow" — CreateGiftListHandler's remarks say so explicitly): the Gateway sends the command onto
@@ -40,6 +41,8 @@ service GiftListsService {
   rpc DeleteGiftList(DeleteGiftListRequest) returns (DeleteGiftListResponse);
   rpc AddGiftItem(AddGiftItemRequest) returns (AddGiftItemResponse);
   rpc RemoveGiftItem(RemoveGiftItemRequest) returns (RemoveGiftItemResponse);
+  // GL-137: owner-only, fire-and-forget; a null description clears it.
+  rpc ChangeGiftItemDescription(ChangeGiftItemDescriptionRequest) returns (ChangeGiftItemDescriptionResponse);
 }
 
 message CreateGiftListRequest {
@@ -85,4 +88,13 @@ message RemoveGiftItemRequest {
 }
 
 message RemoveGiftItemResponse {
+}
+
+message ChangeGiftItemDescriptionRequest {
+  string list_id = 1;
+  string item_id = 2;
+  optional string description = 3;
+}
+
+message ChangeGiftItemDescriptionResponse {
 }

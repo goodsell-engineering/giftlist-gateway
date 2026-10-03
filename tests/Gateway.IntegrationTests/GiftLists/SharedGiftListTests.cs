@@ -234,6 +234,30 @@ public sealed class SharedGiftListTests(GatewayFixture gateway) : IAsyncLifetime
         Assert.Equal("NOT_FOUND", error.Code);
     }
 
+    /// <summary>TC-T2-03: a guest sees an owner's edit on load, through the same share-token-scoped read every other guest fact here goes through.</summary>
+    [Fact]
+    public async Task SharedGiftList_ShouldReturnTheEditedDescription_AfterGiftItemDescriptionChangedV1()
+    {
+        // Arrange
+        var listId = Guid.NewGuid();
+        var shareToken = ShareTokens.New();
+        var itemId = Guid.NewGuid();
+        await PublishListAsync(listId, shareToken, DateTimeOffset.UtcNow.AddDays(7));
+        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(
+            listId, itemId, "Lego Set", "Original", null, DateTimeOffset.UtcNow));
+        await WaitForSharedGiftListAsync(shareToken, list => list.GetProperty("items").GetArrayLength() > 0);
+
+        // Act
+        await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(listId, itemId, "Edited", DateTimeOffset.UtcNow.AddSeconds(1)));
+        var sharedList = await WaitForSharedGiftListAsync(
+            shareToken, list => list.GetProperty("items").EnumerateArray().Single().GetProperty("description").GetString() == "Edited");
+
+        // Assert
+        var item = Assert.Single(sharedList.GetProperty("items").EnumerateArray());
+        Assert.Equal("Lego Set", item.GetProperty("name").GetString());
+        Assert.Equal("Edited", item.GetProperty("description").GetString());
+    }
+
     private Task PublishListAsync(Guid listId, string shareToken, DateTimeOffset expiresAt) =>
         gateway.GiftListsBus.Publish(new GiftListCreatedV1(
             listId, Guid.NewGuid(), "Birthday Wishlist", expiresAt, shareToken, DateTimeOffset.UtcNow));
