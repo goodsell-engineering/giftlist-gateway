@@ -4,6 +4,7 @@ using Gateway.Application.Common;
 using Gateway.Application.GiftLists;
 using Gateway.Application.GiftLists.GetMyGiftLists;
 using Gateway.Application.GiftLists.RecordGiftItemAdded;
+using Gateway.Application.GiftLists.RecordGiftItemDescriptionChanged;
 using Gateway.Application.GiftLists.RecordGiftItemRemoved;
 using Gateway.Application.GiftLists.RecordGiftListCreated;
 using Gateway.Application.GiftLists.RecordGiftListDeleted;
@@ -83,6 +84,7 @@ public static class GatewayInfrastructureServiceCollectionExtensions
         await bus.Subscribe<GiftListDeletedV1>();
         await bus.Subscribe<GiftItemAddedV1>();
         await bus.Subscribe<GiftItemRemovedV1>();
+        await bus.Subscribe<GiftItemDescriptionChangedV1>();
         await bus.Subscribe<GiftReservedV1>();
     }
 
@@ -105,6 +107,9 @@ public static class GatewayInfrastructureServiceCollectionExtensions
         services.AddScoped<IValidator<RecordGiftItemRemovedRequest>, RecordGiftItemRemovedValidator>();
         services.AddScoped<IInteractor<RecordGiftItemRemovedRequest, RecordGiftItemRemovedResponse>, RecordGiftItemRemovedInteractor>();
 
+        services.AddScoped<IValidator<RecordGiftItemDescriptionChangedRequest>, RecordGiftItemDescriptionChangedValidator>();
+        services.AddScoped<IInteractor<RecordGiftItemDescriptionChangedRequest, RecordGiftItemDescriptionChangedResponse>, RecordGiftItemDescriptionChangedInteractor>();
+
         services.AddScoped<IValidator<GetMyGiftListsRequest>, GetMyGiftListsValidator>();
         services.AddScoped<IInteractor<GetMyGiftListsRequest, GetMyGiftListsResponse>, GetMyGiftListsInteractor>();
 
@@ -119,6 +124,7 @@ public static class GatewayInfrastructureServiceCollectionExtensions
         services.AddRebusHandler<GiftListDeletedV1Handler>();
         services.AddRebusHandler<GiftItemAddedV1Handler>();
         services.AddRebusHandler<GiftItemRemovedV1Handler>();
+        services.AddRebusHandler<GiftItemDescriptionChangedV1Handler>();
     }
 
     /// <summary>

@@ -1,5 +1,6 @@
 using BuildingBlocks.Messaging;
 using BuildingBlocks.Testing;
+using Gateway.Application.Reservations;
 using Gateway.Infrastructure.GiftLists.Grpc;
 using Gateway.Infrastructure.Reservations.Grpc;
 using Gateway.Infrastructure.Users.Grpc;
@@ -93,6 +94,9 @@ public sealed class GatewayFixture : IAsyncLifetime
     /// <summary>GL-73: see <see cref="GiftListsEventProbe"/>'s own doc comment.</summary>
     public GiftListsEventProbe EventProbe { get; private set; } = null!;
 
+    /// <summary>GL-137 (TC-T2-21): see <see cref="ReservationProjectionCallCounter"/>'s own doc comment.</summary>
+    public ReservationProjectionCallCounter ReservationProjectionCalls { get; private set; } = null!;
+
     /// <summary>The GiftLists integration events this fixture can publish onto the real broker — see <see cref="UpstreamEventPublisher"/>'s own doc comment.</summary>
     public Rebus.Bus.IBus GiftListsBus => _upstreamEventPublisher.Bus;
 
@@ -180,7 +184,14 @@ public sealed class GatewayFixture : IAsyncLifetime
                 services.AddRebusHandler<GiftListsEventProbeHandler<GiftListDeletedV1>>();
                 services.AddRebusHandler<GiftListsEventProbeHandler<GiftItemAddedV1>>();
                 services.AddRebusHandler<GiftListsEventProbeHandler<GiftItemRemovedV1>>();
+                services.AddRebusHandler<GiftListsEventProbeHandler<GiftItemDescriptionChangedV1>>();
                 services.AddRebusHandler<GiftListsEventProbeHandler<GiftReservedV1>>();
+
+                // GL-137 (TC-T2-21): wraps the production IReservationProjectionRepository so a
+                // test can prove the owner-edit flow reads no reservation data — see
+                // CountingReservationProjectionRepository's own doc comment.
+                services.AddSingleton<ReservationProjectionCallCounter>();
+                services.Decorate<IReservationProjectionRepository, CountingReservationProjectionRepository>();
             });
         });
 
@@ -199,6 +210,7 @@ public sealed class GatewayFixture : IAsyncLifetime
         GraphQlHttpClient = _gatewayFactory.CreateClient();
         Database = _gatewayFactory.Services.GetRequiredService<IMongoDatabase>();
         EventProbe = _gatewayFactory.Services.GetRequiredService<GiftListsEventProbe>();
+        ReservationProjectionCalls = _gatewayFactory.Services.GetRequiredService<ReservationProjectionCallCounter>();
     }
 
     public async Task DisposeAsync()

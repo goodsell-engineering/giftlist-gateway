@@ -500,6 +500,340 @@ public sealed class GiftListProjectionTests(GatewayFixture gateway) : IAsyncLife
         Assert.Equal("Coffee grinder", item.GetProperty("name").GetString());
     }
 
+    [Fact]
+    public async Task GiftItemDescriptionChangedV1_ShouldUpdateTheItemsDescriptionInGiftList()
+    {
+        // Arrange
+        var (listId, ownerId) = await CreateListAsync();
+        var itemId = Guid.NewGuid();
+        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(listId, itemId, "Lego Set", "Original", null, DateTimeOffset.UtcNow));
+        await WaitForGiftListAsync(listId, ownerId, r => r.GetProperty("items").GetArrayLength() > 0);
+
+        // Act — an edit
+        await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(listId, itemId, "Edited", DateTimeOffset.UtcNow.AddSeconds(1)));
+        var edited = await WaitForGiftListAsync(
+            listId, ownerId, r => r.GetProperty("items").EnumerateArray().Single().GetProperty("description").GetString() == "Edited");
+        var editedItem = edited.GetProperty("items").EnumerateArray().Single();
+        Assert.Equal("Lego Set", editedItem.GetProperty("name").GetString()); // TC-T2-01: only the description moves
+
+        // Act — cleared (TC-T2-02: a null Description clears it)
+        await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(listId, itemId, null, DateTimeOffset.UtcNow.AddSeconds(2)));
+        var cleared = await WaitForGiftListAsync(
+            listId, ownerId, r => r.GetProperty("items").EnumerateArray().Single().GetProperty("description").ValueKind == JsonValueKind.Null);
+
+        // Assert
+        Assert.Null(cleared.GetProperty("items").EnumerateArray().Single().GetProperty("description").GetString());
+    }
+
+    [Fact]
+    public async Task GiftItemDescriptionChangedV1_Redelivery_ShouldLeaveTheProjectionDocumentAndVersionUnchanged()
+    {
+        // Arrange
+        var (listId, ownerId) = await CreateListAsync();
+        var itemId = Guid.NewGuid();
+        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(listId, itemId, "Lego Set", null, null, DateTimeOffset.UtcNow));
+        await WaitForGiftListAsync(listId, ownerId, r => r.GetProperty("items").GetArrayLength() > 0);
+        var changedEvent = new GiftItemDescriptionChangedV1(listId, itemId, "Edited", DateTimeOffset.UtcNow.AddSeconds(1));
+        await gateway.GiftListsBus.Publish(changedEvent);
+        await WaitForGiftListAsync(
+            listId, ownerId, r => r.GetProperty("items").EnumerateArray().Single().GetProperty("description").GetString() == "Edited");
+        var before = await gateway.Database
+            .GetCollection<BsonDocument>(GatewayFixture.GiftListProjectionsCollectionName)
+            .Find(Builders<BsonDocument>.Filter.Eq("_id", listId))
+            .FirstOrDefaultAsync();
+
+        // Act — redelivered; see GiftListCreatedV1_Redelivery_ShouldLeaveTheProjectionUnchanged
+        // for why the probe count, not the projection, is what proves this was consumed.
+        var probeBaseline = gateway.EventProbe.CountFor<GiftItemDescriptionChangedV1>();
+        await gateway.GiftListsBus.Publish(changedEvent);
+        await Eventually.Async(
+            () => Task.FromResult(gateway.EventProbe.CountFor<GiftItemDescriptionChangedV1>()),
+            count => count > probeBaseline,
+            WaitTimeout);
+
+        // Assert — the document, including its own version, is unchanged
+        var after = await gateway.Database
+            .GetCollection<BsonDocument>(GatewayFixture.GiftListProjectionsCollectionName)
+            .Find(Builders<BsonDocument>.Filter.Eq("_id", listId))
+            .FirstOrDefaultAsync();
+        Assert.Equal(before, after);
+    }
+
+    /// <summary>
+    /// TC-T2-14: a description edit, then a redelivered — genuinely stale — add for the same item
+    /// must not restore the description the add itself once carried. Before GL-137's
+    /// <c>UpsertOnAdded</c> rewrite this failed, because the add unconditionally overwrote
+    /// <c>Description</c> whenever its own name/url still matched.
+    /// </summary>
+    [Fact]
+    public async Task GiftItemAddedV1_Redelivery_ShouldNotRestoreTheOldDescription_AfterAnEdit()
+    {
+        // Arrange
+        var (listId, ownerId) = await CreateListAsync();
+        var itemId = Guid.NewGuid();
+        var addedAt = DateTimeOffset.UtcNow;
+        var addedEvent = new GiftItemAddedV1(listId, itemId, "Lego Set", "Original", null, addedAt);
+        await gateway.GiftListsBus.Publish(addedEvent);
+        await WaitForGiftListAsync(listId, ownerId, r => r.GetProperty("items").GetArrayLength() > 0);
+        await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(listId, itemId, "Edited", addedAt.AddSeconds(1)));
+        await WaitForGiftListAsync(
+            listId, ownerId, r => r.GetProperty("items").EnumerateArray().Single().GetProperty("description").GetString() == "Edited");
+
+        // Act — the add, redelivered with its own original AddedAt (older than the edit above)
+        var probeBaseline = gateway.EventProbe.CountFor<GiftItemAddedV1>();
+        await gateway.GiftListsBus.Publish(addedEvent);
+        await Eventually.Async(
+            () => Task.FromResult(gateway.EventProbe.CountFor<GiftItemAddedV1>()),
+            count => count > probeBaseline,
+            WaitTimeout);
+
+        // Assert — still the edited value, not the add's own "Original"
+        var response = await QueryGiftListAsync(listId, ownerId);
+        var item = Assert.Single(response!.Value.GetProperty("items").EnumerateArray());
+        Assert.Equal("Edited", item.GetProperty("description").GetString());
+    }
+
+    /// <summary>
+    /// TC-T2-15: a description change for an item this projection has not seen an add for yet is
+    /// appended as an invisible stub (<see cref="GiftItemProjectionDocument.IsStub"/>) rather than
+    /// dropped, and materialises once — with the edit already applied — the moment the real add
+    /// arrives.
+    /// </summary>
+    [Fact]
+    public async Task GiftItemDescriptionChangedV1_ShouldStayInvisibleThenMaterialiseOnceWithTheEdit_WhenItArrivesBeforeTheAdd()
+    {
+        // Arrange — the add's own timestamp is chronologically EARLIER than the edit's (the item
+        // has to exist before it can be edited), but the two messages are delivered in reverse
+        // order (GL-64): the description change arrives at this Gateway before its own item's add
+        // does.
+        var (listId, ownerId) = await CreateListAsync();
+        var itemId = Guid.NewGuid();
+        var addedAt = DateTimeOffset.UtcNow;
+        var changedAt = addedAt.AddSeconds(1);
+
+        // Act — the change arrives first, for an item the projection has never heard of
+        await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(listId, itemId, "Pre-add edit", changedAt));
+        await WaitForRawItemStateAsync(listId, itemId, isRemoved: false);
+
+        // Assert — invisible: the stub is not one of the list's items
+        var beforeAdd = await QueryGiftListAsync(listId, ownerId);
+        Assert.Empty(beforeAdd!.Value.GetProperty("items").EnumerateArray());
+
+        // Act — the real add finally arrives, carrying its own, earlier timestamp
+        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(listId, itemId, "Lego Set", "Original", null, addedAt));
+
+        // Assert — materialises once, with the edit already applied, not the add's own description
+        var afterAdd = await WaitForGiftListAsync(listId, ownerId, r => r.GetProperty("items").GetArrayLength() > 0);
+        var item = Assert.Single(afterAdd.GetProperty("items").EnumerateArray());
+        Assert.Equal("Lego Set", item.GetProperty("name").GetString());
+        Assert.Equal("Pre-add edit", item.GetProperty("description").GetString());
+    }
+
+    /// <summary>
+    /// TC-T2-16: a description change for an already-removed item must not resurrect it — the
+    /// tombstone wins. Here the change's own timestamp is chronologically AFTER the remove's
+    /// (t1 add &lt; t2 remove &lt; t3 change): the generic "older than what's stored" staleness
+    /// guard in <c>UpsertOnDescriptionChanged</c> would let this one through on timestamp alone,
+    /// so this is the one case that pins the explicit <c>IsRemoved</c> check specifically —
+    /// mutation-tested: removing that check alone (leaving the timestamp guard in place) makes
+    /// this test fail.
+    /// </summary>
+    [Fact]
+    public async Task GiftItemDescriptionChangedV1_ShouldNotResurrectTheItem_WhenItArrivesAfterTheRemove()
+    {
+        // Arrange
+        var (listId, ownerId) = await CreateListAsync();
+        var itemId = Guid.NewGuid();
+        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(listId, itemId, "Lego Set", "Original", null, DateTimeOffset.UtcNow));
+        await WaitForGiftListAsync(listId, ownerId, r => r.GetProperty("items").GetArrayLength() > 0);
+        await gateway.GiftListsBus.Publish(new GiftItemRemovedV1(listId, itemId, DateTimeOffset.UtcNow.AddSeconds(1)));
+        await WaitForRawItemStateAsync(listId, itemId, isRemoved: true);
+
+        // Act — a description change arrives after the remove, with a later timestamp too
+        var probeBaseline = gateway.EventProbe.CountFor<GiftItemDescriptionChangedV1>();
+        await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(
+            listId, itemId, "Too late", DateTimeOffset.UtcNow.AddSeconds(2)));
+        await Eventually.Async(
+            () => Task.FromResult(gateway.EventProbe.CountFor<GiftItemDescriptionChangedV1>()),
+            count => count > probeBaseline,
+            WaitTimeout);
+
+        // Assert — still gone, not resurrected
+        var response = await QueryGiftListAsync(listId, ownerId);
+        Assert.Empty(response!.Value.GetProperty("items").EnumerateArray());
+    }
+
+    /// <summary>
+    /// TC-T2-16, the realistic ordering: t1 (add) &lt; t2 (change) &lt; t3 (remove) — the owner
+    /// edits, then removes, so the change's own timestamp predates the remove's — but the change's
+    /// message is the one that arrives late (GL-64 reordering), after the remove has already been
+    /// applied. Also must not resurrect the item. This case happens to be caught by the general
+    /// staleness guard as well as by <c>IsRemoved</c> (t2 &lt; t3, so <c>changedAt &lt;
+    /// current.UpdatedAt</c> already rejects it), so it is not the mutation-distinguishing case —
+    /// the test above is — but it is the ordering an owner's edit-then-delete would actually
+    /// produce, so it is worth pinning in its own right.
+    /// </summary>
+    [Fact]
+    public async Task GiftItemDescriptionChangedV1_ShouldNotResurrectTheItem_WhenTheChangePredatesTheRemoveButArrivesAfterIt()
+    {
+        // Arrange
+        var (listId, ownerId) = await CreateListAsync();
+        var itemId = Guid.NewGuid();
+        var addedAt = DateTimeOffset.UtcNow;
+        var changedAt = addedAt.AddSeconds(1);
+        var removedAt = addedAt.AddSeconds(2);
+        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(listId, itemId, "Lego Set", "Original", null, addedAt));
+        await WaitForGiftListAsync(listId, ownerId, r => r.GetProperty("items").GetArrayLength() > 0);
+        await gateway.GiftListsBus.Publish(new GiftItemRemovedV1(listId, itemId, removedAt));
+        await WaitForRawItemStateAsync(listId, itemId, isRemoved: true);
+
+        // Act — the change arrives only now, carrying its own earlier timestamp
+        var probeBaseline = gateway.EventProbe.CountFor<GiftItemDescriptionChangedV1>();
+        await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(listId, itemId, "Too late", changedAt));
+        await Eventually.Async(
+            () => Task.FromResult(gateway.EventProbe.CountFor<GiftItemDescriptionChangedV1>()),
+            count => count > probeBaseline,
+            WaitTimeout);
+
+        // Assert — still gone, not resurrected
+        var response = await QueryGiftListAsync(listId, ownerId);
+        Assert.Empty(response!.Value.GetProperty("items").EnumerateArray());
+    }
+
+    /// <summary>
+    /// TC-T2-26 (adopted from TC-GL-137-P05, coverage review's "Proposed cases"): the one path where a stub
+    /// becomes a tombstone, rather than materialising through <c>UpsertOnAdded</c>'s own
+    /// stub-aware branch. A description change for an item this projection has never seen an add
+    /// for creates an invisible <c>IsStub</c> row (TC-T2-15); a remove for that same item must
+    /// turn it into an ordinary tombstone with <c>IsStub</c> cleared (<c>UpsertOnRemoved</c>'s own
+    /// doc comment: "<c>IsStub</c> always clears to false here"). The late add that finally
+    /// arrives, carrying the earliest of the three timestamps, then has to lose to that tombstone
+    /// through the ordinary tie-to-tombstone rule in <c>UpsertOnAdded</c> — which only runs that
+    /// rule because it first checks <c>IsStub</c> and finds it already false. If
+    /// <c>UpsertOnRemoved</c> instead carried the stub's own <c>IsStub</c> through onto the
+    /// tombstone, this add would be routed into the stub-materialising branch instead and
+    /// resurrect the item.
+    /// </summary>
+    [Fact]
+    public async Task GiftItemAddedV1_ShouldNotResurrectTheItem_WhenItArrivesAfterADescriptionChangeAndARemove()
+    {
+        // Arrange
+        var (listId, ownerId) = await CreateListAsync();
+        var itemId = Guid.NewGuid();
+        var t1 = DateTimeOffset.UtcNow;
+        var t2 = t1.AddSeconds(1);
+        var t3 = t1.AddSeconds(2);
+        await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(listId, itemId, "Edited", t2));
+        await WaitForRawItemStateAsync(listId, itemId, isRemoved: false);
+        await gateway.GiftListsBus.Publish(new GiftItemRemovedV1(listId, itemId, t3));
+        await WaitForRawItemStateAsync(listId, itemId, isRemoved: true);
+
+        // Act — the add arrives last, carrying the earliest of the three timestamps
+        var probeBaseline = gateway.EventProbe.CountFor<GiftItemAddedV1>();
+        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(listId, itemId, "Lego Set", "Original", null, t1));
+        await Eventually.Async(
+            () => Task.FromResult(gateway.EventProbe.CountFor<GiftItemAddedV1>()),
+            count => count > probeBaseline,
+            WaitTimeout);
+
+        // Assert — invisible through the public surface, same as every other tombstone
+        var response = await QueryGiftListAsync(listId, ownerId);
+        Assert.Empty(response!.Value.GetProperty("items").EnumerateArray());
+
+        // Assert — and the raw tombstone itself: still removed, not a stub, stamped with the remove's own instant
+        var document = await gateway.Database
+            .GetCollection<BsonDocument>(GatewayFixture.GiftListProjectionsCollectionName)
+            .Find(Builders<BsonDocument>.Filter.Eq("_id", listId))
+            .FirstOrDefaultAsync();
+        var item = document!["items"].AsBsonArray.Select(i => i.AsBsonDocument).Single(i => i["itemId"].AsGuid == itemId);
+        Assert.True(item["isRemoved"].AsBoolean);
+        Assert.False(item["isStub"].AsBoolean);
+        Assert.Equal(t3.UtcDateTime, item["updatedAt"].ToUniversalTime(), TimeSpan.FromMilliseconds(1));
+    }
+
+    /// <summary>TC-T2-17: an older description change arriving after a newer one already applied is ignored.</summary>
+    [Fact]
+    public async Task GiftItemDescriptionChangedV1_ShouldBeIgnored_WhenOlderThanTheAppliedChange()
+    {
+        // Arrange
+        var (listId, ownerId) = await CreateListAsync();
+        var itemId = Guid.NewGuid();
+        var addedAt = DateTimeOffset.UtcNow;
+        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(listId, itemId, "Lego Set", "Original", null, addedAt));
+        await WaitForGiftListAsync(listId, ownerId, r => r.GetProperty("items").GetArrayLength() > 0);
+        await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(listId, itemId, "Newer", addedAt.AddSeconds(5)));
+        await WaitForGiftListAsync(
+            listId, ownerId, r => r.GetProperty("items").EnumerateArray().Single().GetProperty("description").GetString() == "Newer");
+
+        // Act — an older change, chronologically before the one already applied
+        var probeBaseline = gateway.EventProbe.CountFor<GiftItemDescriptionChangedV1>();
+        await gateway.GiftListsBus.Publish(new GiftItemDescriptionChangedV1(listId, itemId, "Older", addedAt.AddSeconds(1)));
+        await Eventually.Async(
+            () => Task.FromResult(gateway.EventProbe.CountFor<GiftItemDescriptionChangedV1>()),
+            count => count > probeBaseline,
+            WaitTimeout);
+
+        // Assert
+        var response = await QueryGiftListAsync(listId, ownerId);
+        var item = Assert.Single(response!.Value.GetProperty("items").EnumerateArray());
+        Assert.Equal("Newer", item.GetProperty("description").GetString());
+    }
+
+    /// <summary>
+    /// AC4 / plan Risk R3: a raw item document written before GL-137 carries neither
+    /// <c>descriptionUpdatedAt</c> nor <c>isStub</c> at all — not even <see langword="null"/>/<see langword="false"/>,
+    /// absent outright, the way a real pre-migration document would be. The inverted, non-required
+    /// <c>IsStub</c> must read as <see langword="false"/> so the item stays visible with no
+    /// migration; modelling it as a natural <c>HasAdded</c> would make every existing item
+    /// disappear (see <c>GiftItemProjectionDocument.IsStub</c>'s own doc comment).
+    /// </summary>
+    [Fact]
+    public async Task GiftList_ShouldShowExistingItemsUnchanged_WhenTheirDocumentsLackTheNewFields()
+    {
+        // Arrange — written directly as a raw BsonDocument, not through GiftItemProjectionDocument,
+        // so the new fields are genuinely absent rather than merely null/default.
+        var listId = Guid.NewGuid();
+        var ownerId = Guid.NewGuid();
+        var itemId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var document = new BsonDocument
+        {
+            ["_id"] = new BsonBinaryData(listId, GuidRepresentation.Standard),
+            ["ownerId"] = new BsonBinaryData(ownerId, GuidRepresentation.Standard),
+            ["name"] = "Birthday Wishlist",
+            ["nameUpdatedAt"] = now,
+            ["expiresAt"] = now.AddDays(7),
+            ["shareToken"] = ShareTokens.New(),
+            ["createdAt"] = now,
+            ["hasCreated"] = true,
+            ["isDeleted"] = false,
+            ["deletedAt"] = BsonNull.Value,
+            ["version"] = 0L,
+            ["items"] = new BsonArray
+            {
+                new BsonDocument
+                {
+                    ["itemId"] = new BsonBinaryData(itemId, GuidRepresentation.Standard),
+                    ["name"] = "Lego Set",
+                    ["description"] = "Pre-GL-137 item",
+                    ["url"] = BsonNull.Value,
+                    ["isRemoved"] = false,
+                    ["updatedAt"] = now,
+                    // deliberately no "descriptionUpdatedAt", no "isStub" — a genuinely old document
+                },
+            },
+        };
+        await gateway.Database.GetCollection<BsonDocument>(GatewayFixture.GiftListProjectionsCollectionName).InsertOneAsync(document);
+
+        // Act
+        var response = await QueryGiftListAsync(listId, ownerId);
+
+        // Assert
+        var item = Assert.Single(response!.Value.GetProperty("items").EnumerateArray());
+        Assert.Equal("Lego Set", item.GetProperty("name").GetString());
+        Assert.Equal("Pre-GL-137 item", item.GetProperty("description").GetString());
+    }
+
     private async Task<(Guid ListId, Guid OwnerId)> CreateListAsync()
     {
         var listId = Guid.NewGuid();

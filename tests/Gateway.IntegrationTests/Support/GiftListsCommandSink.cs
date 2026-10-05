@@ -23,6 +23,7 @@ public sealed class GiftListsCommandSink
     private readonly ConcurrentQueue<DeleteGiftList> _deleteGiftLists = new();
     private readonly ConcurrentQueue<AddGiftItem> _addGiftItems = new();
     private readonly ConcurrentQueue<RemoveGiftItem> _removeGiftItems = new();
+    private readonly ConcurrentQueue<ChangeGiftItemDescription> _changeGiftItemDescriptions = new();
 
     /// <summary>
     /// GL-45: the <c>rbs2-corr-id</c> header actually delivered on the wire with each
@@ -43,6 +44,8 @@ public sealed class GiftListsCommandSink
 
     public IReadOnlyCollection<RemoveGiftItem> RemoveGiftItems => _removeGiftItems;
 
+    public IReadOnlyCollection<ChangeGiftItemDescription> ChangeGiftItemDescriptions => _changeGiftItemDescriptions;
+
     public void Record(CreateGiftList message) => _createGiftLists.Enqueue(message);
 
     public void Record(RenameGiftList message) => _renameGiftLists.Enqueue(message);
@@ -52,6 +55,8 @@ public sealed class GiftListsCommandSink
     public void Record(AddGiftItem message) => _addGiftItems.Enqueue(message);
 
     public void Record(RemoveGiftItem message) => _removeGiftItems.Enqueue(message);
+
+    public void Record(ChangeGiftItemDescription message) => _changeGiftItemDescriptions.Enqueue(message);
 
     /// <summary>See <see cref="_correlationIdsByCreatedListId"/>'s own doc comment.</summary>
     public void RecordCorrelationId(Guid listId, string? correlationId) =>

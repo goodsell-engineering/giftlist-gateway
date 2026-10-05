@@ -243,6 +243,79 @@ public sealed class GiftListsGrpcServiceTests(GatewayFixture gateway)
         AssertRejectedByEndpointAuthorization(exception);
     }
 
+    [Fact]
+    public async Task ChangeGiftItemDescription_ShouldSendTheCommandWithTheCallersOwnIdAsRequesterId()
+    {
+        // Arrange
+        var requesterId = Guid.NewGuid();
+        var listId = Guid.NewGuid();
+        var itemId = Guid.NewGuid();
+        var request = new ChangeGiftItemDescriptionRequest
+        {
+            ListId = listId.ToString(),
+            ItemId = itemId.ToString(),
+            Description = "Edited",
+        };
+
+        // Act
+        await gateway.GiftListsClient.ChangeGiftItemDescriptionAsync(request, AuthHeaders(requesterId)).ResponseAsync;
+        var command = await WaitForAsync(() => gateway.GiftListsCommands.ChangeGiftItemDescriptions.FirstOrDefault(c => c.ItemId == itemId));
+
+        // Assert
+        Assert.Equal(requesterId, command!.RequesterId);
+        Assert.Equal(listId, command.ListId);
+        Assert.Equal("Edited", command.Description);
+    }
+
+    [Fact]
+    public async Task ChangeGiftItemDescription_ShouldSendANullDescription_WhenTheFieldIsOmitted()
+    {
+        // Arrange — no Description assignment at all, deliberately (the same proto3-presence
+        // reasoning as AddGiftItemRequest.Description).
+        var requesterId = Guid.NewGuid();
+        var listId = Guid.NewGuid();
+        var itemId = Guid.NewGuid();
+        var request = new ChangeGiftItemDescriptionRequest { ListId = listId.ToString(), ItemId = itemId.ToString() };
+
+        // Act
+        await gateway.GiftListsClient.ChangeGiftItemDescriptionAsync(request, AuthHeaders(requesterId)).ResponseAsync;
+        var command = await WaitForAsync(() => gateway.GiftListsCommands.ChangeGiftItemDescriptions.FirstOrDefault(c => c.ItemId == itemId));
+
+        // Assert
+        Assert.Null(command!.Description);
+    }
+
+    [Fact]
+    public async Task ChangeGiftItemDescription_ShouldFailWithUnauthenticatedAndSendNoCommand_WhenNoAccessTokenIsSent()
+    {
+        // Arrange
+        var itemId = Guid.NewGuid();
+        var request = new ChangeGiftItemDescriptionRequest { ListId = Guid.NewGuid().ToString(), ItemId = itemId.ToString() };
+
+        // Act
+        var exception = await Record.ExceptionAsync(() => gateway.GiftListsClient.ChangeGiftItemDescriptionAsync(request).ResponseAsync);
+
+        // Assert
+        AssertRejectedByEndpointAuthorization(exception);
+        Assert.DoesNotContain(gateway.GiftListsCommands.ChangeGiftItemDescriptions, c => c.ItemId == itemId);
+    }
+
+    [Fact]
+    public async Task ChangeGiftItemDescription_ShouldFailWithInvalidArgument_WhenItemIdIsEmpty()
+    {
+        // Arrange
+        var request = new ChangeGiftItemDescriptionRequest { ListId = Guid.NewGuid().ToString(), ItemId = "" };
+
+        // Act
+        var exception = await Record.ExceptionAsync(
+            () => gateway.GiftListsClient.ChangeGiftItemDescriptionAsync(request, AuthHeaders(Guid.NewGuid())).ResponseAsync);
+
+        // Assert
+        var rpcException = Assert.IsType<RpcException>(exception);
+        Assert.Equal(StatusCode.InvalidArgument, rpcException.StatusCode);
+        Assert.Equal("gateway.invalid_id", rpcException.Trailers.GetValue(ErrorToRpcExceptionMapper.ErrorCodeTrailerName));
+    }
+
     /// <summary>
     /// The issue's central security scenario: a caller who does not own <paramref name="listId"/>
     /// cannot make the resulting command carry anyone's id but their own — there is no field on

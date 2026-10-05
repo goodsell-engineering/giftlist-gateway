@@ -1,4 +1,5 @@
 using Gateway.Application.GiftLists.RecordGiftItemAdded;
+using Gateway.Application.GiftLists.RecordGiftItemDescriptionChanged;
 using Gateway.Application.GiftLists.RecordGiftItemRemoved;
 using Gateway.Application.GiftLists.RecordGiftListCreated;
 using Gateway.Application.GiftLists.RecordGiftListDeleted;
@@ -12,7 +13,7 @@ namespace Gateway.Application.GiftLists;
 /// its own, deliberately narrower pair of ports — see
 /// <c>Gateway.Application.Reservations.IReservationProjectionRepository</c>.
 ///
-/// The five <c>Apply*</c> methods are the whole of GL-23's redelivery/reordering story
+/// The six <c>Apply*</c> methods are the whole of GL-23's redelivery/reordering story
 /// (Batch 12 review comments): each is expected to be an <em>idempotent, last-write-wins
 /// upsert</em>, never a blind insert or append (CONVENTIONS.md "Messaging") —
 /// <list type="bullet">
@@ -90,4 +91,16 @@ public interface IGiftListProjectionRepository
     /// </summary>
     /// <exception cref="GiftListProjectionApplyExhaustedException">See <see cref="ApplyListCreatedAsync"/>.</exception>
     Task ApplyItemRemovedAsync(RecordGiftItemRemovedRequest request, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// GL-137: ordered against the item's effective description instant
+    /// (<c>DescriptionUpdatedAt ?? UpdatedAt</c>, the add instant for a live item), keyed on
+    /// <c>ItemId</c> within the list, same as <see cref="ApplyItemAddedAsync"/>/
+    /// <see cref="ApplyItemRemovedAsync"/>. When no entry exists yet for the item, a stub is
+    /// appended (invisible to reads) so a description that arrives before its item's add is not
+    /// lost; when the item is already a tombstone, this is a no-op — the tombstone wins. See the
+    /// implementation's <c>MutateOnItemDescriptionChanged</c> for the exact rule.
+    /// </summary>
+    /// <exception cref="GiftListProjectionApplyExhaustedException">See <see cref="ApplyListCreatedAsync"/>.</exception>
+    Task ApplyItemDescriptionChangedAsync(RecordGiftItemDescriptionChangedRequest request, CancellationToken cancellationToken);
 }

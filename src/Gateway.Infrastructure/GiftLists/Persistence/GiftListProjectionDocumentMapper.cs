@@ -7,9 +7,10 @@ internal static class GiftListProjectionDocumentMapper
 {
     /// <summary>
     /// Removed items (tombstones — see <see cref="GiftItemProjectionDocument.IsRemoved"/>'s own
-    /// doc comment) are filtered out here, never on the way in: this is the one place that
-    /// decides what a query response looks like, so it is the one place a future second query
-    /// cannot forget the filter.
+    /// doc comment) and item stubs (<see cref="GiftItemProjectionDocument.IsStub"/> — a
+    /// description that arrived before its item's add, GL-137) are filtered out here, never on
+    /// the way in: this is the one place that decides what a query response looks like, so it is
+    /// the one place a future second query cannot forget the filter.
     /// </summary>
     public static GiftListProjection ToProjection(GiftListProjectionDocument document) => new(
         document.Id,
@@ -19,7 +20,7 @@ internal static class GiftListProjectionDocumentMapper
         document.ShareToken,
         new DateTimeOffset(document.CreatedAt, TimeSpan.Zero),
         document.Items
-            .Where(item => !item.IsRemoved)
+            .Where(item => !item.IsRemoved && !item.IsStub)
             .Select(item => new GiftItemProjection(item.ItemId, item.Name, item.Description, item.Url))
             .ToList());
 }
