@@ -6,8 +6,8 @@
          framing middleware Gateway.Host needs (UseGrpcWeb) — the meta-package does not include
          it. Both are permitted here by CONVENTIONS.md "Project reference graph": Grpc.* is banned from Application, not
          Infrastructure. -->
-    <PackageReference Include="Grpc.AspNetCore" Version="2.83.0" />
-    <PackageReference Include="Grpc.AspNetCore.Web" Version="2.83.0" />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.84.0" />
+    <PackageReference Include="Grpc.AspNetCore.Web" Version="2.84.0" />
     <!-- GL-23: the Gateway's own read model (Mongo) and the Rebus subscription that fills it from
          GiftLists' integration events. Same package/version choices as GiftLists.Infrastructure
          and Identity.Infrastructure, for consistency across services. -->

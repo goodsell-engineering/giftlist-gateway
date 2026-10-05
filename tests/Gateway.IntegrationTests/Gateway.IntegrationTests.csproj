@@ -25,8 +25,8 @@
          Protobuf item) speaks over these — Grpc.Net.Client.Web wraps the HTTP handler so the
          test genuinely exercises grpc-web framing (UseGrpcWeb), not plain HTTP/2 gRPC, which is
          the one thing GL-18 actually adds over an ordinary gRPC server. -->
-    <PackageReference Include="Grpc.Net.Client" Version="2.83.0" />
-    <PackageReference Include="Grpc.Net.Client.Web" Version="2.83.0" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.84.0" />
+    <PackageReference Include="Grpc.Net.Client.Web" Version="2.84.0" />
     <!-- GL-23: asserts directly against gateway.giftListProjections (the projection's persistence
          collection) and publishes GiftLists' own integration events onto the real broker. -->
     <PackageReference Include="MongoDB.Driver" Version="3.11.1" />
