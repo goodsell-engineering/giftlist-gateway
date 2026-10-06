@@ -153,6 +153,13 @@ public sealed class ReservationVisibilityTests(GatewayFixture gateway) : IAsyncL
     /// already says the owner branch never calls the port at all; this proves it end to end
     /// through <see cref="CountingReservationProjectionRepository"/>, not merely by reading that
     /// comment.
+    ///
+    /// GL-142 / TC-GL-137-P06 adds a positive control: after the zero-read assertion, one guest
+    /// <c>sharedGiftList(token)</c> query must raise the count by exactly one. Without it, if the
+    /// counting decorator were absent or bypassed, 0 == 0 would still pass (GL-137 coverage
+    /// review, risk R-f). The count is the same whether or not a reservation exists, because the
+    /// guest branch calls the port either way; the reserved flag is covered elsewhere
+    /// (ARCHITECTURE.md "Defence in depth on the owner-facing path").
     /// </summary>
     [Fact]
     public async Task ChangeGiftItemDescription_ShouldNotReadTheReservationProjection_WhenTheOwnerEditsThenConfirmsViaGiftList()
@@ -183,6 +190,13 @@ public sealed class ReservationVisibilityTests(GatewayFixture gateway) : IAsyncL
 
         // Assert — no call to IReservationProjectionRepository.FindByListAsync happened for any of it
         Assert.Equal(callsBefore, gateway.ReservationProjectionCalls.FindByListCallCount);
+        var callsBeforeGuestRead = gateway.ReservationProjectionCalls.FindByListCallCount;
+
+        // Positive control — one guest query, no retry: every retry would call the port again
+        var guestResponse = await GraphQlClient.QueryAsync(
+            gateway.GraphQlHttpClient, GiftListGraphQlQueries.SharedGiftList, new { token = shareToken });
+        Assert.Empty(guestResponse.Errors);
+        Assert.Equal(callsBeforeGuestRead + 1, gateway.ReservationProjectionCalls.FindByListCallCount);
     }
 
     private async Task PublishListAsync(Guid listId, Guid ownerId, string shareToken, Guid itemId)
