@@ -93,7 +93,7 @@ public class GiftListsProtoContractTests
     }
 
     [Fact]
-    public void ChangeGiftItemPriorityRequest_ShouldDeclareExactlyListIdItemIdAndPriority()
+    public void ChangeGiftItemPriorityRequest_ShouldHaveExactlyListIdItemIdAndPriority()
     {
         // Arrange
         var descriptor = ChangeGiftItemPriorityRequest.Descriptor;
