@@ -8,7 +8,7 @@ option csharp_namespace = "Gateway.Infrastructure.GiftLists.Grpc";
 
 // GL-71: the browser's grpc-web entry point for the GiftLists command surface. One RPC per
 // command in GiftLists.Contracts.GiftLists (CreateGiftList/RenameGiftList/DeleteGiftList/
-// AddGiftItem/RemoveGiftItem/ChangeGiftItemDescription — six, since GL-137), so the two evolve
+// AddGiftItem/RemoveGiftItem/ChangeGiftItemDescription/ChangeGiftItemPriority — seven, since GL-152), so the two evolve
 // independently — mirrors identity.proto's own rationale exactly (GL-18 is the precedent this
 // file follows).
 //
@@ -43,6 +43,8 @@ service GiftListsService {
   rpc RemoveGiftItem(RemoveGiftItemRequest) returns (RemoveGiftItemResponse);
   // GL-137: owner-only, fire-and-forget; a null description clears it.
   rpc ChangeGiftItemDescription(ChangeGiftItemDescriptionRequest) returns (ChangeGiftItemDescriptionResponse);
+  // GL-152: owner-only, fire-and-forget; the priority is 1-5, enforced by GiftLists, not here.
+  rpc ChangeGiftItemPriority(ChangeGiftItemPriorityRequest) returns (ChangeGiftItemPriorityResponse);
 }
 
 message CreateGiftListRequest {
@@ -75,6 +77,8 @@ message AddGiftItemRequest {
   string name = 2;
   optional string description = 3;
   optional string url = 4;
+  // GL-152: absent means the default (3), applied by GiftLists.
+  optional int32 priority = 5;
 }
 
 message AddGiftItemResponse {
@@ -97,4 +101,13 @@ message ChangeGiftItemDescriptionRequest {
 }
 
 message ChangeGiftItemDescriptionResponse {
+}
+
+message ChangeGiftItemPriorityRequest {
+  string list_id = 1;
+  string item_id = 2;
+  int32 priority = 3;
+}
+
+message ChangeGiftItemPriorityResponse {
 }
