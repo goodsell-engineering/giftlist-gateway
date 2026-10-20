@@ -88,7 +88,8 @@ internal sealed class GiftListsGrpcService(IBus bus) : GiftListsService.GiftList
             itemId,
             request.Name,
             request.HasDescription ? request.Description : null,
-            request.HasUrl ? request.Url : null);
+            request.HasUrl ? request.Url : null,
+            request.HasPriority ? request.Priority : null);
         await bus.Send(command);
 
         return new AddGiftItemResponse { ItemId = itemId.ToString() };
@@ -114,6 +115,21 @@ internal sealed class GiftListsGrpcService(IBus bus) : GiftListsService.GiftList
         await bus.Send(command);
 
         return new ChangeGiftItemDescriptionResponse();
+    }
+
+    // GL-152: no range or presence check — an omitted priority arrives as 0 and GiftLists
+    // rejects it; domain rules belong to the owning service.
+    public override async Task<ChangeGiftItemPriorityResponse> ChangeGiftItemPriority(ChangeGiftItemPriorityRequest request, ServerCallContext context)
+    {
+        var requesterId = context.RequireUserId();
+        var command = new ChangeGiftItemPriority(
+            ParseId(request.ListId),
+            requesterId,
+            ParseId(request.ItemId),
+            request.Priority);
+        await bus.Send(command);
+
+        return new ChangeGiftItemPriorityResponse();
     }
 
     /// <summary>

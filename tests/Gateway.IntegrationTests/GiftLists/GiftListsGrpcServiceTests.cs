@@ -244,6 +244,141 @@ public sealed class GiftListsGrpcServiceTests(GatewayFixture gateway)
     }
 
     [Fact]
+    public async Task AddGiftItem_ShouldSendThePriorityUnchanged_WhenTheFieldIsSet()
+    {
+        // Arrange
+        var requesterId = Guid.NewGuid();
+        var request = new AddGiftItemRequest { ListId = Guid.NewGuid().ToString(), Name = "Lego Set", Priority = 4 };
+
+        // Act
+        var response = await gateway.GiftListsClient.AddGiftItemAsync(request, AuthHeaders(requesterId)).ResponseAsync;
+        var itemId = Guid.Parse(response.ItemId);
+        var command = await WaitForAsync(() => gateway.GiftListsCommands.AddGiftItems.FirstOrDefault(c => c.ItemId == itemId));
+
+        // Assert
+        Assert.Equal(4, command!.Priority);
+        Assert.Equal(requesterId, command.RequesterId);
+    }
+
+    [Fact]
+    public async Task AddGiftItem_ShouldSendANullPriority_WhenTheFieldIsOmitted()
+    {
+        // Arrange — no Priority assignment at all, so the optional field has no presence.
+        var request = new AddGiftItemRequest { ListId = Guid.NewGuid().ToString(), Name = "Lego Set" };
+
+        // Act
+        var response = await gateway.GiftListsClient.AddGiftItemAsync(request, AuthHeaders(Guid.NewGuid())).ResponseAsync;
+        var itemId = Guid.Parse(response.ItemId);
+        var command = await WaitForAsync(() => gateway.GiftListsCommands.AddGiftItems.FirstOrDefault(c => c.ItemId == itemId));
+
+        // Assert
+        Assert.Null(command!.Priority);
+    }
+
+    [Fact]
+    public async Task AddGiftItem_ShouldSendAnOutOfRangePriorityUnchanged_WithoutRangeChecking()
+    {
+        // Arrange — the range is a GiftLists domain rule; the Gateway must not enforce it.
+        var request = new AddGiftItemRequest { ListId = Guid.NewGuid().ToString(), Name = "Lego Set", Priority = 9 };
+
+        // Act
+        var response = await gateway.GiftListsClient.AddGiftItemAsync(request, AuthHeaders(Guid.NewGuid())).ResponseAsync;
+        var itemId = Guid.Parse(response.ItemId);
+        var command = await WaitForAsync(() => gateway.GiftListsCommands.AddGiftItems.FirstOrDefault(c => c.ItemId == itemId));
+
+        // Assert
+        Assert.Equal(9, command!.Priority);
+    }
+
+    [Fact]
+    public async Task ChangeGiftItemPriority_ShouldSendAnOutOfRangePriorityUnchanged_WithoutRangeChecking()
+    {
+        // Arrange
+        var itemId = Guid.NewGuid();
+        var request = new ChangeGiftItemPriorityRequest { ListId = Guid.NewGuid().ToString(), ItemId = itemId.ToString(), Priority = 0 };
+
+        // Act
+        await gateway.GiftListsClient.ChangeGiftItemPriorityAsync(request, AuthHeaders(Guid.NewGuid())).ResponseAsync;
+        var command = await WaitForAsync(() => gateway.GiftListsCommands.ChangeGiftItemPriorities.FirstOrDefault(c => c.ItemId == itemId));
+
+        // Assert
+        Assert.Equal(0, command!.Priority);
+    }
+
+    [Fact]
+    public async Task ChangeGiftItemPriority_ShouldSendTheCommandWithTheCallersOwnIdAsRequesterId_AndReturnAnEmptyResponse()
+    {
+        // Arrange
+        var requesterId = Guid.NewGuid();
+        var listId = Guid.NewGuid();
+        var itemId = Guid.NewGuid();
+        var request = new ChangeGiftItemPriorityRequest { ListId = listId.ToString(), ItemId = itemId.ToString(), Priority = 5 };
+
+        // Act
+        var response = await gateway.GiftListsClient.ChangeGiftItemPriorityAsync(request, AuthHeaders(requesterId)).ResponseAsync;
+        var command = await WaitForAsync(() => gateway.GiftListsCommands.ChangeGiftItemPriorities.FirstOrDefault(c => c.ItemId == itemId));
+
+        // Assert
+        Assert.Equal(new ChangeGiftItemPriorityResponse(), response);
+        Assert.Equal(new global::GiftLists.Contracts.GiftLists.ChangeGiftItemPriority(listId, requesterId, itemId, 5), command);
+        Assert.Single(gateway.GiftListsCommands.ChangeGiftItemPriorities, c => c.ItemId == itemId);
+    }
+
+    [Fact]
+    public async Task ChangeGiftItemPriority_ShouldFailWithUnauthenticatedAndSendNoCommand_WhenNoAccessTokenIsSent()
+    {
+        // Arrange
+        var itemId = Guid.NewGuid();
+        var request = new ChangeGiftItemPriorityRequest { ListId = Guid.NewGuid().ToString(), ItemId = itemId.ToString(), Priority = 5 };
+
+        // Act
+        var exception = await Record.ExceptionAsync(() => gateway.GiftListsClient.ChangeGiftItemPriorityAsync(request).ResponseAsync);
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+
+        // Assert
+        AssertRejectedByEndpointAuthorization(exception);
+        Assert.DoesNotContain(gateway.GiftListsCommands.ChangeGiftItemPriorities, c => c.ItemId == itemId);
+    }
+
+    [Fact]
+    public async Task ChangeGiftItemPriority_ShouldFailWithInvalidArgumentAndSendNoCommand_WhenListIdIsMalformed()
+    {
+        // Arrange
+        var itemId = Guid.NewGuid();
+        var request = new ChangeGiftItemPriorityRequest { ListId = "not-a-guid", ItemId = itemId.ToString(), Priority = 5 };
+
+        // Act
+        var exception = await Record.ExceptionAsync(
+            () => gateway.GiftListsClient.ChangeGiftItemPriorityAsync(request, AuthHeaders(Guid.NewGuid())).ResponseAsync);
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+
+        // Assert
+        var rpcException = Assert.IsType<RpcException>(exception);
+        Assert.Equal(StatusCode.InvalidArgument, rpcException.StatusCode);
+        Assert.Equal("gateway.invalid_id", rpcException.Trailers.GetValue(ErrorToRpcExceptionMapper.ErrorCodeTrailerName));
+        Assert.DoesNotContain(gateway.GiftListsCommands.ChangeGiftItemPriorities, c => c.ItemId == itemId);
+    }
+
+    [Fact]
+    public async Task ChangeGiftItemPriority_ShouldFailWithInvalidArgumentAndSendNoCommand_WhenItemIdIsEmpty()
+    {
+        // Arrange
+        var listId = Guid.NewGuid();
+        var request = new ChangeGiftItemPriorityRequest { ListId = listId.ToString(), ItemId = "", Priority = 5 };
+
+        // Act
+        var exception = await Record.ExceptionAsync(
+            () => gateway.GiftListsClient.ChangeGiftItemPriorityAsync(request, AuthHeaders(Guid.NewGuid())).ResponseAsync);
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+
+        // Assert
+        var rpcException = Assert.IsType<RpcException>(exception);
+        Assert.Equal(StatusCode.InvalidArgument, rpcException.StatusCode);
+        Assert.Equal("gateway.invalid_id", rpcException.Trailers.GetValue(ErrorToRpcExceptionMapper.ErrorCodeTrailerName));
+        Assert.DoesNotContain(gateway.GiftListsCommands.ChangeGiftItemPriorities, c => c.ListId == listId);
+    }
+
+    [Fact]
     public async Task ChangeGiftItemDescription_ShouldSendTheCommandWithTheCallersOwnIdAsRequesterId()
     {
         // Arrange

@@ -1,6 +1,7 @@
 using System.Reflection;
 using Gateway.Infrastructure.GiftLists.Grpc;
 using Google.Protobuf;
+using Google.Protobuf.Reflection;
 
 namespace Gateway.UnitTests.GiftLists;
 
@@ -58,6 +59,52 @@ public class GiftListsProtoContractTests
         Assert.True(count > 0,
             "No generated Google.Protobuf.IMessage types were found in Gateway.Infrastructure.GiftLists.Grpc — " +
             "the reflection scan above is running against an empty set and proves nothing.");
+    }
+
+    [Fact]
+    public void GiftListsService_ShouldDeclareChangeGiftItemPriority_WithItsRequestAndResponseTypes()
+    {
+        // Arrange
+        var service = GiftlistsReflection.Descriptor.Services.Single(s => s.Name == "GiftListsService");
+
+        // Act
+        var method = service.Methods.SingleOrDefault(m => m.Name == "ChangeGiftItemPriority");
+
+        // Assert
+        Assert.NotNull(method);
+        Assert.Equal(typeof(ChangeGiftItemPriorityRequest), method.InputType.ClrType);
+        Assert.Equal(typeof(ChangeGiftItemPriorityResponse), method.OutputType.ClrType);
+    }
+
+    [Fact]
+    public void AddGiftItemRequest_ShouldDeclarePriorityAsField5WithPresence()
+    {
+        // Arrange
+        var descriptor = AddGiftItemRequest.Descriptor;
+
+        // Act
+        var field = descriptor.FindFieldByName("priority");
+
+        // Assert
+        Assert.NotNull(field);
+        Assert.Equal(5, field.FieldNumber);
+        Assert.Equal(FieldType.Int32, field.FieldType);
+        Assert.True(field.HasPresence);
+    }
+
+    [Fact]
+    public void ChangeGiftItemPriorityRequest_ShouldDeclareExactlyListIdItemIdAndPriority()
+    {
+        // Arrange
+        var descriptor = ChangeGiftItemPriorityRequest.Descriptor;
+
+        // Act
+        var fields = descriptor.Fields.InFieldNumberOrder().Select(f => (f.FieldNumber, f.Name, f.FieldType)).ToList();
+
+        // Assert — and, with the existing scan above, no requester or owner field.
+        Assert.Equal(
+            new[] { (1, "list_id", FieldType.String), (2, "item_id", FieldType.String), (3, "priority", FieldType.Int32) },
+            fields);
     }
 
     private static List<Type> GetGeneratedMessageTypes() => typeof(GiftListsService)
