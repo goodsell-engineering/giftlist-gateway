@@ -7,4 +7,5 @@ public sealed record RecordGiftItemAddedRequest(
     string Name,
     string? Description,
     string? Url,
-    DateTimeOffset AddedAt);
+    DateTimeOffset AddedAt,
+    int? Priority);

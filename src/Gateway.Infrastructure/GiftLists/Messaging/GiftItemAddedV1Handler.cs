@@ -16,7 +16,7 @@ internal sealed class GiftItemAddedV1Handler(
     {
         var cancellationToken = MessageContext.Current.GetCancellationToken();
         var request = new RecordGiftItemAddedRequest(
-            message.ListId, message.ItemId, message.Name, message.Description, message.Url, message.AddedAt);
+            message.ListId, message.ItemId, message.Name, message.Description, message.Url, message.AddedAt, message.Priority);
         await recordGiftItemAdded.Handle(request, cancellationToken);
     }
 }

@@ -27,6 +27,14 @@ public sealed class GiftItemProjectionDocument
 
     public string? Url { get; init; }
 
+    /// <summary>
+    /// The item's priority, 1 to 5 (GL-147). Never <c>required</c> and nullable, so that an absent
+    /// BSON field (every item projected before this field existed, and any add from before
+    /// <c>GiftItemAddedV1</c> 0.4.0) reads as null rather than 0; null means 3, applied once in
+    /// <see cref="GiftListProjectionDocumentMapper.ToProjection"/>.
+    /// </summary>
+    public int? Priority { get; init; }
+
     public required bool IsRemoved { get; init; }
 
     /// <summary>

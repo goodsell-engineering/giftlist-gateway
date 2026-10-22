@@ -70,8 +70,8 @@ public sealed class ReservationVisibilityTests(GatewayFixture gateway) : IAsyncL
 
     /// <summary>
     /// The whole reservation surface of the schema, in one place: the guest's item has exactly
-    /// five fields of which <c>reserved</c> is the only reservation fact and is a non-null
-    /// <c>Boolean</c>; the owner's item has exactly four and no reservation fact at all; the
+    /// six fields of which <c>reserved</c> is the only reservation fact and is a non-null
+    /// <c>Boolean</c>; the owner's item has exactly five and no reservation fact at all; <c>priority</c> is a non-null <c>Int</c> on both (GL-147); the
     /// subscription type has exactly one field, taking exactly a <c>token</c> — no id, nothing an
     /// owner could subscribe with (ARCHITECTURE.md "Realtime updates": "no owner-facing
     /// subscription carrying reservation data").
@@ -90,16 +90,18 @@ public sealed class ReservationVisibilityTests(GatewayFixture gateway) : IAsyncL
 
         var guestFields = data.GetProperty("guestItem").GetProperty("fields").EnumerateArray().ToList();
         Assert.Equal(
-            ["description", "itemId", "name", "reserved", "url"],
+            ["description", "itemId", "name", "priority", "reserved", "url"],
             guestFields.Select(f => f.GetProperty("name").GetString()).OrderBy(n => n, StringComparer.Ordinal));
         var reserved = Assert.Single(guestFields, f => f.GetProperty("name").GetString() == "reserved");
         Assert.Equal("NON_NULL", reserved.GetProperty("type").GetProperty("kind").GetString());
         Assert.Equal("Boolean", reserved.GetProperty("type").GetProperty("ofType").GetProperty("name").GetString());
+        AssertNonNullInt(Assert.Single(guestFields, f => f.GetProperty("name").GetString() == "priority"));
 
+        var ownerFields = data.GetProperty("ownerItem").GetProperty("fields").EnumerateArray().ToList();
         Assert.Equal(
-            ["description", "itemId", "name", "url"],
-            data.GetProperty("ownerItem").GetProperty("fields").EnumerateArray()
-                .Select(f => f.GetProperty("name").GetString()).OrderBy(n => n, StringComparer.Ordinal));
+            ["description", "itemId", "name", "priority", "url"],
+            ownerFields.Select(f => f.GetProperty("name").GetString()).OrderBy(n => n, StringComparer.Ordinal));
+        AssertNonNullInt(Assert.Single(ownerFields, f => f.GetProperty("name").GetString() == "priority"));
 
         var subscriptionField = Assert.Single(
             data.GetProperty("__schema").GetProperty("subscriptionType").GetProperty("fields").EnumerateArray());
@@ -200,12 +202,71 @@ public sealed class ReservationVisibilityTests(GatewayFixture gateway) : IAsyncL
         Assert.Equal(callsBefore + 1, gateway.ReservationProjectionCalls.FindByListCallCount);
     }
 
-    private async Task PublishListAsync(Guid listId, Guid ownerId, string shareToken, Guid itemId)
+    /// <summary>
+    /// GL-147 (TC-GL-147-10): the owner reads two items with priorities, one of them reserved,
+    /// and the reservation projection is still not read. The reservation is confirmed projected before
+    /// the counter baseline is taken, and the guest response shows the item reserved. The guest query that follows is the
+    /// positive control (GL-142, GL-143): without it a counting decorator that was absent or
+    /// bypassed would pass the zero-read assertion as 0 == 0.
+    /// </summary>
+    [Fact]
+    public async Task GiftList_ShouldNotReadTheReservationProjection_WhenTheOwnerReadsItemsWithPriorities()
+    {
+        // Arrange — priorities 2 and 5, the second reserved
+        var listId = Guid.NewGuid();
+        var ownerId = Guid.NewGuid();
+        var shareToken = ShareTokens.New();
+        var firstItemId = Guid.NewGuid();
+        var secondItemId = Guid.NewGuid();
+        await PublishListAsync(listId, ownerId, shareToken, firstItemId, priority: 2);
+        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(
+            listId, secondItemId, "Coffee grinder", null, null, DateTimeOffset.UtcNow, 5));
+        var reservedProbeBefore = gateway.EventProbe.CountFor<GiftReservedV1>();
+        await gateway.ReservationsBus.Publish(new GiftReservedV1(listId, secondItemId, DateTimeOffset.UtcNow));
+        var accessToken = TestTokenIssuer.IssueAccessToken(ownerId);
+        await WaitForOwnerListAsync(listId, accessToken, list => list.GetProperty("items").GetArrayLength() == 2);
+
+        // The reservation is projected before the baseline, so no late handler can move the count
+        // and "one of them reserved" really holds. The probe advances only once the handler is done.
+        await Eventually.Async(
+            () => Task.FromResult(gateway.EventProbe.CountFor<GiftReservedV1>()),
+            count => count > reservedProbeBefore,
+            WaitTimeout);
+        var callsBefore = gateway.ReservationProjectionCalls.FindByListCallCount;
+
+        // Act
+        var owner = await WaitForOwnerListAsync(listId, accessToken, list => list.GetProperty("items").GetArrayLength() == 2);
+
+        // Assert — both priorities served, no reservation read
+        var priorities = owner.GetProperty("items").EnumerateArray()
+            .ToDictionary(i => i.GetProperty("itemId").GetGuid(), i => i.GetProperty("priority").GetInt32());
+        Assert.Equal(2, priorities[firstItemId]);
+        Assert.Equal(5, priorities[secondItemId]);
+        Assert.Equal(callsBefore, gateway.ReservationProjectionCalls.FindByListCallCount);
+
+        // Positive control — one guest query, no retry: every retry would call the port again
+        var guestResponse = await GraphQlClient.QueryAsync(
+            gateway.GraphQlHttpClient, GiftListGraphQlQueries.SharedGiftList, new { token = shareToken });
+        Assert.Empty(guestResponse.Errors);
+        Assert.Equal(callsBefore + 1, gateway.ReservationProjectionCalls.FindByListCallCount);
+        var guestItems = guestResponse.Data!.Value.GetProperty("sharedGiftList").GetProperty("items").EnumerateArray()
+            .ToDictionary(i => i.GetProperty("itemId").GetGuid(), i => i.GetProperty("reserved").GetBoolean());
+        Assert.True(guestItems[secondItemId]);
+    }
+
+    private static void AssertNonNullInt(JsonElement field)
+    {
+        var type = field.GetProperty("type");
+        Assert.Equal("NON_NULL", type.GetProperty("kind").GetString());
+        Assert.Equal("Int", type.GetProperty("ofType").GetProperty("name").GetString());
+    }
+
+    private async Task PublishListAsync(Guid listId, Guid ownerId, string shareToken, Guid itemId, int? priority = null)
     {
         await gateway.GiftListsBus.Publish(new GiftListCreatedV1(
             listId, ownerId, "Birthday Wishlist", DateTimeOffset.UtcNow.AddDays(7), shareToken, DateTimeOffset.UtcNow));
         await gateway.GiftListsBus.Publish(new GiftItemAddedV1(
-            listId, itemId, "Lego Set", "The big one", "https://example.test/lego", DateTimeOffset.UtcNow));
+            listId, itemId, "Lego Set", "The big one", "https://example.test/lego", DateTimeOffset.UtcNow, priority));
     }
 
     private async Task<JsonElement> WaitForOwnerListAsync(Guid listId, string accessToken, Func<JsonElement, bool> condition) =>

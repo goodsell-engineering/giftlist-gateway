@@ -97,7 +97,7 @@ internal sealed class ViewGiftListInteractor(
 
         var items = list.Items
             .Select(item => new SharedGiftItemView(
-                item.ItemId, item.Name, item.Description, item.Url, Reserved: reservedItemIds.Contains(item.ItemId)))
+                item.ItemId, item.Name, item.Description, item.Url, item.Priority, Reserved: reservedItemIds.Contains(item.ItemId)))
             .ToList();
 
         return new ViewGiftListResponse(

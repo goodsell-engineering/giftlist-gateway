@@ -6,6 +6,12 @@ namespace Gateway.Infrastructure.GiftLists.Persistence;
 internal static class GiftListProjectionDocumentMapper
 {
     /// <summary>
+    /// <c>GiftItemAddedV1.Priority</c>'s contract doc reads an absent priority as 3. This is the one
+    /// place the default is applied, so owner and guest views cannot disagree about it.
+    /// </summary>
+    private const int DefaultPriority = 3;
+
+    /// <summary>
     /// Removed items (tombstones — see <see cref="GiftItemProjectionDocument.IsRemoved"/>'s own
     /// doc comment) and item stubs (<see cref="GiftItemProjectionDocument.IsStub"/> — a
     /// description that arrived before its item's add, GL-137) are filtered out here, never on
@@ -21,6 +27,6 @@ internal static class GiftListProjectionDocumentMapper
         new DateTimeOffset(document.CreatedAt, TimeSpan.Zero),
         document.Items
             .Where(item => !item.IsRemoved && !item.IsStub)
-            .Select(item => new GiftItemProjection(item.ItemId, item.Name, item.Description, item.Url))
+            .Select(item => new GiftItemProjection(item.ItemId, item.Name, item.Description, item.Url, item.Priority ?? DefaultPriority))
             .ToList());
 }

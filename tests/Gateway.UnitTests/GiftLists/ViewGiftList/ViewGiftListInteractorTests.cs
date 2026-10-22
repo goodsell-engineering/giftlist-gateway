@@ -141,6 +141,38 @@ public sealed class ViewGiftListInteractorTests
         Assert.Equal([list.ListId], reservations.ListsAskedFor);
     }
 
+    /// <summary>Priorities 4 and 2: neither is the default 3, so an uncopied value cannot pass by coincidence.</summary>
+    [Fact]
+    public async Task Handle_ShouldCarryEachItemsPriorityIntoTheGuestView_WhenTheViewerHoldsTheToken()
+    {
+        // Arrange
+        var firstItemId = Guid.NewGuid();
+        var secondItemId = Guid.NewGuid();
+        var list = ListOwnedBy(Guid.NewGuid(), firstItemId, secondItemId);
+        var giftLists = new FakeGiftListProjectionRepository();
+        giftLists.Seed(list);
+        var interactor = GatewayPorts.BuildViewGiftList(giftLists, new FakeReservationProjectionRepository());
+
+        // Act
+        var result = await interactor.Handle(
+            new ViewGiftListRequest(new ViewerContext.GuestWithToken(ShareToken)), CancellationToken.None);
+
+        // Assert
+        Assert.True(result.IsSuccess);
+        var guest = Assert.IsType<GiftListView.ForGuest>(result.Value.View);
+        Assert.Collection(guest.GiftList.Items,
+            item =>
+            {
+                Assert.Equal(firstItemId, item.ItemId);
+                Assert.Equal(4, item.Priority);
+            },
+            item =>
+            {
+                Assert.Equal(secondItemId, item.ItemId);
+                Assert.Equal(2, item.Priority);
+            });
+    }
+
     /// <summary>
     /// The guest's item type is the only place a reservation fact is ever surfaced, and it is a
     /// boolean. Pinned by reflection so that a field added to <see cref="SharedGiftItemView"/>
@@ -159,6 +191,7 @@ public sealed class ViewGiftListInteractorTests
             [nameof(SharedGiftItemView.Name)] = typeof(string),
             [nameof(SharedGiftItemView.Description)] = typeof(string),
             [nameof(SharedGiftItemView.Url)] = typeof(string),
+            [nameof(SharedGiftItemView.Priority)] = typeof(int),
             [nameof(SharedGiftItemView.Reserved)] = typeof(bool),
         };
 
@@ -250,7 +283,7 @@ public sealed class ViewGiftListInteractorTests
         ShareToken,
         Now,
         [
-            new GiftItemProjection(firstItemId, "Lego Set", "The big one", "https://example.test/lego"),
-            new GiftItemProjection(secondItemId, "Coffee grinder", null, null),
+            new GiftItemProjection(firstItemId, "Lego Set", "The big one", "https://example.test/lego", 4),
+            new GiftItemProjection(secondItemId, "Coffee grinder", null, null, 2),
         ]);
 }
