@@ -204,7 +204,8 @@ public sealed class ReservationVisibilityTests(GatewayFixture gateway) : IAsyncL
 
     /// <summary>
     /// GL-147 (TC-GL-147-10): the owner reads two items with priorities, one of them reserved,
-    /// and the reservation projection is still not read. The guest query that follows is the
+    /// and the reservation projection is still not read. The reservation is confirmed projected before
+    /// the counter baseline is taken, and the guest response shows the item reserved. The guest query that follows is the
     /// positive control (GL-142, GL-143): without it a counting decorator that was absent or
     /// bypassed would pass the zero-read assertion as 0 == 0.
     /// </summary>
@@ -220,9 +221,17 @@ public sealed class ReservationVisibilityTests(GatewayFixture gateway) : IAsyncL
         await PublishListAsync(listId, ownerId, shareToken, firstItemId, priority: 2);
         await gateway.GiftListsBus.Publish(new GiftItemAddedV1(
             listId, secondItemId, "Coffee grinder", null, null, DateTimeOffset.UtcNow, 5));
+        var reservedProbeBefore = gateway.EventProbe.CountFor<GiftReservedV1>();
         await gateway.ReservationsBus.Publish(new GiftReservedV1(listId, secondItemId, DateTimeOffset.UtcNow));
         var accessToken = TestTokenIssuer.IssueAccessToken(ownerId);
         await WaitForOwnerListAsync(listId, accessToken, list => list.GetProperty("items").GetArrayLength() == 2);
+
+        // The reservation is projected before the baseline, so no late handler can move the count
+        // and "one of them reserved" really holds. The probe advances only once the handler is done.
+        await Eventually.Async(
+            () => Task.FromResult(gateway.EventProbe.CountFor<GiftReservedV1>()),
+            count => count > reservedProbeBefore,
+            WaitTimeout);
         var callsBefore = gateway.ReservationProjectionCalls.FindByListCallCount;
 
         // Act
@@ -240,6 +249,9 @@ public sealed class ReservationVisibilityTests(GatewayFixture gateway) : IAsyncL
             gateway.GraphQlHttpClient, GiftListGraphQlQueries.SharedGiftList, new { token = shareToken });
         Assert.Empty(guestResponse.Errors);
         Assert.Equal(callsBefore + 1, gateway.ReservationProjectionCalls.FindByListCallCount);
+        var guestItems = guestResponse.Data!.Value.GetProperty("sharedGiftList").GetProperty("items").EnumerateArray()
+            .ToDictionary(i => i.GetProperty("itemId").GetGuid(), i => i.GetProperty("reserved").GetBoolean());
+        Assert.True(guestItems[secondItemId]);
     }
 
     private static void AssertNonNullInt(JsonElement field)
