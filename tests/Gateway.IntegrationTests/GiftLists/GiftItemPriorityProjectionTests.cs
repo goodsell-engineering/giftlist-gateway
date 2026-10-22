@@ -216,6 +216,28 @@ public sealed class GiftItemPriorityProjectionTests(GatewayFixture gateway) : IA
         Assert.Equal(before, after);
     }
 
+    /// <summary>
+    /// Same instant, name, description and url, different priority: not a redelivery, so the add's
+    /// priority applies. This is the case that fails if the exact-redelivery check ignores priority.
+    /// </summary>
+    [Fact]
+    public async Task GiftItemAddedV1_ShouldTakeTheNewPriority_WhenOnlyThePriorityDiffersAtTheSameInstant()
+    {
+        // Arrange
+        var list = await CreateListAsync();
+        var itemId = Guid.NewGuid();
+        var addedAt = DateTimeOffset.UtcNow;
+        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(list.ListId, itemId, "Lego Set", null, null, addedAt, 4));
+        await WaitForOwnerItemAsync(list, itemId);
+
+        // Act
+        await gateway.GiftListsBus.Publish(new GiftItemAddedV1(list.ListId, itemId, "Lego Set", null, null, addedAt, 2));
+        var owner = await WaitForOwnerItemAsync(list, itemId, item => item.GetProperty("priority").GetInt32() == 2);
+
+        // Assert
+        Assert.Equal(2, owner.GetProperty("priority").GetInt32());
+    }
+
     private sealed record ListHandle(Guid ListId, Guid OwnerId, string ShareToken);
 
     private async Task<ListHandle> CreateListAsync()
