@@ -4,7 +4,8 @@ namespace Gateway.Application.GiftLists.ViewGiftList;
 /// One item as a guest holding the share link sees it: the item itself, plus
 /// <paramref name="Reserved"/> — a boolean, and the only reservation fact this system ever
 /// surfaces to anyone (ARCHITECTURE.md "Nobody can see *who* reserved": "The guest view returns
-/// <c>reserved: boolean</c> per item and nothing more").
+/// <c>reserved: boolean</c> per item and nothing more"). <paramref name="Priority"/> is the owner's
+/// own content about the item (1 to 5), not a reservation fact, and says nothing about who reserved.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -27,4 +28,4 @@ namespace Gateway.Application.GiftLists.ViewGiftList;
 /// have to remember to leave null.
 /// </para>
 /// </remarks>
-public sealed record SharedGiftItemView(Guid ItemId, string Name, string? Description, string? Url, bool Reserved);
+public sealed record SharedGiftItemView(Guid ItemId, string Name, string? Description, string? Url, int Priority, bool Reserved);

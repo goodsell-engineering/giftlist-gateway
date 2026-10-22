@@ -7,6 +7,7 @@ namespace Gateway.Application.GiftLists;
 /// nowhere to put reservation state rather than by a resolver remembering to leave it out
 /// (ARCHITECTURE.md "Defence in depth on the owner-facing path"). The guest's item is a separate
 /// type, <c>ViewGiftList.SharedGiftItemView</c>, which carries <c>reserved: boolean</c> and only
-/// that (ARCHITECTURE.md "Nobody can see *who* reserved").
+/// that (ARCHITECTURE.md "Nobody can see *who* reserved"). <c>Priority</c> is owner content
+/// (1 to 5, 3 when the stored item has none), not reservation state.
 /// </summary>
-public sealed record GiftItemProjection(Guid ItemId, string Name, string? Description, string? Url);
+public sealed record GiftItemProjection(Guid ItemId, string Name, string? Description, string? Url, int Priority);

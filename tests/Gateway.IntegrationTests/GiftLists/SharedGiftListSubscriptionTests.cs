@@ -54,6 +54,38 @@ public sealed class SharedGiftListSubscriptionTests(GatewayFixture gateway) : IA
     }
 
     /// <summary>
+    /// GL-147 (TC-GL-147-09): a push triggered today (a reservation) carries each item's priority.
+    /// 4 is neither the default 3 nor the contract's null, so an uncopied or defaulted value fails.
+    /// The exact field set of the pushed item type is pinned by
+    /// <c>ReservationVisibilityTests.Schema_ShouldExposeReservedAsTheOnlyReservationFactAndNoOwnerFacingSubscription</c>.
+    /// </summary>
+    [Fact]
+    public async Task SharedGiftListChanged_ShouldCarryEachItemsPriority_WhenAReservationPushArrives()
+    {
+        // Arrange
+        var listId = Guid.NewGuid();
+        var shareToken = ShareTokens.New();
+        var itemId = Guid.NewGuid();
+        await PublishListAsync(listId, shareToken, itemId, priority: 4);
+        await WaitForItemAsync(shareToken, itemId);
+        using var cancellation = new CancellationTokenSource(WaitTimeout);
+        await using var client = await gateway.ConnectSubscriptionClientAsync(cancellation.Token);
+        await client.SubscribeAsync(GiftListGraphQlQueries.SharedGiftListChanged, new { token = shareToken }, cancellation.Token);
+
+        // Act
+        await gateway.ReservationsBus.Publish(new GiftReservedV1(listId, itemId, DateTimeOffset.UtcNow));
+        var message = await client.ReceiveAsync(cancellation.Token);
+
+        // Assert
+        Assert.Equal("next", message.Type);
+        Assert.Empty(message.ErrorMessages);
+        var view = message.Payload!.Value.GetProperty("data").GetProperty("sharedGiftListChanged");
+        var item = Assert.Single(view.GetProperty("items").EnumerateArray());
+        Assert.Equal(4, item.GetProperty("priority").GetInt32());
+        Assert.True(item.GetProperty("reserved").GetBoolean());
+    }
+
+    /// <summary>
     /// Share-token scoping. A subscriber to list A hears nothing when list B changes. Silence
     /// alone proves little — a broken channel is silent too — so after the window passes, A is
     /// changed and the very next message must be A's: the channel was live throughout, and B's
@@ -143,12 +175,12 @@ public sealed class SharedGiftListSubscriptionTests(GatewayFixture gateway) : IA
         Assert.Equal([expectedErrorCode], message.ErrorCodes);
     }
 
-    private async Task PublishListAsync(Guid listId, string shareToken, Guid itemId)
+    private async Task PublishListAsync(Guid listId, string shareToken, Guid itemId, int? priority = null)
     {
         await gateway.GiftListsBus.Publish(new GiftListCreatedV1(
             listId, Guid.NewGuid(), "Birthday Wishlist", DateTimeOffset.UtcNow.AddDays(7), shareToken, DateTimeOffset.UtcNow));
         await gateway.GiftListsBus.Publish(new GiftItemAddedV1(
-            listId, itemId, "Lego Set", "The big one", "https://example.test/lego", DateTimeOffset.UtcNow));
+            listId, itemId, "Lego Set", "The big one", "https://example.test/lego", DateTimeOffset.UtcNow, priority));
     }
 
     private Task WaitForItemAsync(string shareToken, Guid itemId) =>

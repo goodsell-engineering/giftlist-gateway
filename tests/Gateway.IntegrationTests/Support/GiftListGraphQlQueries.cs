@@ -12,7 +12,7 @@ internal static class GiftListGraphQlQueries
             expiresAt
             shareToken
             createdAt
-            items { itemId name description url }
+            items { itemId name description url priority }
           }
         }
         """;
@@ -26,7 +26,7 @@ internal static class GiftListGraphQlQueries
             expiresAt
             shareToken
             createdAt
-            items { itemId name description url }
+            items { itemId name description url priority }
           }
         }
         """;
@@ -44,7 +44,7 @@ internal static class GiftListGraphQlQueries
             listId
             name
             expiresAt
-            items { itemId name description url reserved }
+            items { itemId name description url priority reserved }
           }
         }
         """;
@@ -83,7 +83,7 @@ internal static class GiftListGraphQlQueries
             listId
             name
             expiresAt
-            items { itemId name description url reserved }
+            items { itemId name description url priority reserved }
           }
         }
         """;
@@ -105,7 +105,7 @@ internal static class GiftListGraphQlQueries
     public const string ReservationSurfaceIntrospection = """
         query {
           guestItem: __type(name: "SharedGiftItemView") { fields { name type { kind name ofType { name } } } }
-          ownerItem: __type(name: "GiftItemProjection") { fields { name } }
+          ownerItem: __type(name: "GiftItemProjection") { fields { name type { kind name ofType { name } } } }
           __schema { subscriptionType { fields { name args { name } } } }
         }
         """;

@@ -382,7 +382,7 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
     {
         var baseline = existing ?? Stub(request.ListId);
         var (items, changed) = UpsertOnAdded(
-            baseline.Items, request.ItemId, ProjectionInstants.ToStoredPrecision(request.AddedAt), request.Name, request.Description, request.Url);
+            baseline.Items, request.ItemId, ProjectionInstants.ToStoredPrecision(request.AddedAt), request.Name, request.Description, request.Url, request.Priority);
 
         return changed ? (WithItems(baseline, items), true) : (baseline, false);
     }
@@ -438,7 +438,7 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
     /// be overwritten by an older add arriving late.
     /// </summary>
     private static (List<GiftItemProjectionDocument> Items, bool Changed) UpsertOnAdded(
-        List<GiftItemProjectionDocument> items, Guid itemId, DateTime addedAt, string name, string? description, string? url)
+        List<GiftItemProjectionDocument> items, Guid itemId, DateTime addedAt, string name, string? description, string? url, int? priority)
     {
         var index = items.FindIndex(i => i.ItemId == itemId);
 
@@ -450,6 +450,7 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
                 Name = name,
                 Description = description,
                 Url = url,
+                Priority = priority,
                 IsRemoved = false,
                 UpdatedAt = addedAt,
                 DescriptionUpdatedAt = null,
@@ -473,6 +474,7 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
                 Name = name,
                 Description = keepStubDescription ? current.Description : description,
                 Url = url,
+                Priority = priority,
                 IsRemoved = false,
                 UpdatedAt = addedAt,
                 DescriptionUpdatedAt = keepStubDescription ? current.DescriptionUpdatedAt : null,
@@ -502,13 +504,13 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
         // GL-137: a description change at least as new as this add already applied — the add
         // must not resurrect the old description (TC-T2-14). Name/url/tombstone still follow
         // today's rule; the description and its own instant are carried through unchanged, and
-        // the exact-redelivery check below then compares name and url only.
+        // the exact-redelivery check below then compares name, url and priority (and the description when it is not ignored).
         var ignoreAddDescription = current.DescriptionUpdatedAt is { } currentChangedAt && currentChangedAt >= addedAt;
         var effectiveDescription = ignoreAddDescription ? current.Description : description;
         var effectiveDescriptionUpdatedAt = ignoreAddDescription ? current.DescriptionUpdatedAt : null;
 
         if (current.UpdatedAt == addedAt && !current.IsRemoved &&
-            current.Name == name && current.Url == url &&
+            current.Name == name && current.Url == url && current.Priority == priority &&
             (ignoreAddDescription || current.Description == description))
         {
             return (items, false); // exact redelivery
@@ -521,6 +523,7 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
             Name = name,
             Description = effectiveDescription,
             Url = url,
+            Priority = priority,
             IsRemoved = false,
             UpdatedAt = addedAt,
             DescriptionUpdatedAt = effectiveDescriptionUpdatedAt,
@@ -547,6 +550,7 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
                 Name = string.Empty,
                 Description = null,
                 Url = null,
+                Priority = null,
                 IsRemoved = true,
                 UpdatedAt = removedAt,
                 DescriptionUpdatedAt = null,
@@ -576,6 +580,7 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
             Name = current.Name,
             Description = current.Description,
             Url = current.Url,
+            Priority = current.Priority,
             IsRemoved = true,
             UpdatedAt = removedAt,
             DescriptionUpdatedAt = current.DescriptionUpdatedAt,
@@ -610,6 +615,7 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
                 Name = string.Empty,
                 Description = description,
                 Url = null,
+                Priority = null,
                 IsRemoved = false,
                 UpdatedAt = DateTime.MinValue,
                 DescriptionUpdatedAt = changedAt,
@@ -642,6 +648,7 @@ internal sealed class GiftListProjectionRepository : IGiftListProjectionReposito
             Name = current.Name,
             Description = description,
             Url = current.Url,
+            Priority = current.Priority,
             IsRemoved = false,
             UpdatedAt = current.UpdatedAt,
             DescriptionUpdatedAt = changedAt,
