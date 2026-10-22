@@ -142,11 +142,11 @@ public sealed class GiftItemPriorityProjectionTests(GatewayFixture gateway) : IA
             count => count > probeBaseline,
             WaitTimeout);
 
-        // Assert — the stale add wrote nothing, so the tombstone holds no priority
+        // Assert — the stale add wrote nothing, so the tombstone's priority stays null
         var owner = await QueryOwnerAsync(list);
         Assert.Empty(owner!.Value.GetProperty("items").EnumerateArray());
         var tombstone = await WaitForRawItemAsync(list.ListId, itemId, item => item["isRemoved"].AsBoolean);
-        Assert.True(!tombstone.Contains("priority") || tombstone["priority"].IsBsonNull);
+        Assert.True(tombstone["priority"].IsBsonNull); // the driver writes the null explicitly; the add's 5 must not be there
     }
 
     [Fact]
